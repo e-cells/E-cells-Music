@@ -1,0 +1,53 @@
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:9.2.1'
+        classpath 'com.google.gms:google-services:4.4.4'
+
+        // NOTE: Do not place your application dependencies here; they belong
+        // in the individual module build.gradle files
+    }
+}
+
+apply from: "variables.gradle"
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+        maven { url "https://maven.mozilla.org/maven2/" }
+    }
+}
+
+// 【优化 1】使用现代的 tasks.register 语法，并替换废弃的 buildDir
+tasks.register('clean', Delete) {
+    delete rootProject.layout.buildDirectory
+}
+
+// 【优化 2】自动构建 Web 前端资源（首次需在项目根目录执行 npm install）
+tasks.register('buildWebAssets', Exec) {
+    workingDir rootProject.file('..')
+    def npmCmd = System.getProperty('os.name').toLowerCase().contains('win') ? 'npm.cmd' : 'npm'
+    commandLine npmCmd, 'run', 'build:web'
+}
+
+// 【优化 3】复制资源任务
+tasks.register('copyWebAssets', Copy) {
+    dependsOn buildWebAssets
+    from rootProject.file('../dist')
+    into rootProject.file('app/src/main/assets/public')
+}
+
+subprojects {
+    afterEvaluate { project ->
+        project.tasks.matching { it.name == 'preBuild' }.configureEach {
+            // 确保准确引用按新语法注册的 task
+            dependsOn rootProject.tasks.named('copyWebAssets')
+        }
+    }
+}

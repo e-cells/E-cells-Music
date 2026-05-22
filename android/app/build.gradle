@@ -1,0 +1,79 @@
+apply plugin: 'com.android.application'
+
+android {
+    // 修复 1：移除等号，使用标准 Groovy 语法
+    namespace "com.muye.ecells.music"
+    compileSdk 36
+    
+    defaultConfig {
+        applicationId "com.muye.ecells.music"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 3
+        versionName "1.0.2"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+
+    // 从 local.properties 读取签名配置（不提交到版本控制）
+    def keystoreProperties = new Properties()
+    def keystorePropsFile = rootProject.file('local.properties')
+    if (keystorePropsFile.exists()) {
+        keystoreProperties.load(new FileInputStream(keystorePropsFile))
+    }
+
+    signingConfigs {
+        release {
+            storeFile rootProject.file('echomusic-release.jks')
+            storePassword keystoreProperties['storePassword'] ?: ''
+            keyAlias keystoreProperties['keyAlias'] ?: ''
+            keyPassword keystoreProperties['keyPassword'] ?: ''
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.release
+        }
+    }
+
+    // 按 ABI 分开构建 APK
+    splits {
+        abi {
+            enable true
+            reset()
+            include 'arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64'
+            universalApk false
+        }
+    }
+
+    // 每个 ABI 版本使用不同的 versionCode，确保不冲突
+    applicationVariants.all { variant ->
+        // 修复 2：将 .each 改为 .all，防止由于并发修改引起的 DefaultDomainObjectCollection.add 崩溃
+        variant.outputs.all { output ->
+            def abi = output.getFilter(com.android.build.OutputFile.ABI)
+            def versionCodes = ['armeabi-v7a': 1, 'x86': 2, 'arm64-v8a': 3, 'x86_64': 4]
+            if (abi != null && versionCodes.containsKey(abi)) {
+                output.versionCodeOverride = variant.versionCode * 10 + versionCodes[abi]
+                outputFileName = "e-cells-music-${abi}-${variant.versionName}.apk"
+            }
+        }
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation "org.mozilla.geckoview:geckoview:128.0.20240725162350"
+    implementation "androidx.media:media:$mediaVersion"
+    implementation "org.nanohttpd:nanohttpd:2.3.1"
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+}

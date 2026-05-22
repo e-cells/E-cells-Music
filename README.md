@@ -41,6 +41,7 @@
 
 **🔗 下载链接**
 * **GitHub**：[Releases 下载](https://github.com/e-cells/EchoMusic-for-Android/releases)
+* **天翼云盘**：[点我下载,访问码：7km9](https://cloud.189.cn/web/share?code=qYV7NjjeYj6b)
 ---
 
 **📱 架构版本选择指南**

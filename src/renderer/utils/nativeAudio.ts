@@ -1,7 +1,7 @@
 import { isGeckoView, NativeAudioBridge } from './nativeBridge';
 
 export interface NativeAudioPlugin {
-  loadAudio(options: { url: string }): Promise<{ loaded: boolean }>;
+  loadAudio(options: { url: string; hash?: string; quality?: string }): Promise<{ loaded: boolean }>;
   play(): Promise<void>;
   pause(): Promise<void>;
   stop(): Promise<void>;
@@ -53,6 +53,11 @@ export interface NativeAudioPlugin {
   ): Promise<any>;
   addListener(eventName: 'mediaButtonDuck', listenerFunc: () => void): Promise<any>;
   addListener(eventName: 'mediaButtonUnduck', listenerFunc: () => void): Promise<any>;
+  addListener(eventName: 'cacheProgress', listenerFunc: (data: { cacheKey: string; percent: number }) => void): Promise<any>;
+
+  getCacheInfo(): Promise<{ sizeBytes: number; fileCount: number; maxSizeBytes: number }>;
+  clearCache(): Promise<void>;
+  setCacheSizeLimit(options: { mb: number }): Promise<void>;
 }
 
 const NativeAudio: NativeAudioPlugin = isGeckoView
@@ -73,6 +78,9 @@ const NativeAudio: NativeAudioPlugin = isGeckoView
       addListener: (eventName: string, listenerFunc: Function) => {
         return Promise.resolve(NativeAudioBridge.addListener(eventName, listenerFunc as any));
       },
+      getCacheInfo: () => NativeAudioBridge.getCacheInfo(),
+      clearCache: () => NativeAudioBridge.clearCache().then(() => {}),
+      setCacheSizeLimit: (opts) => NativeAudioBridge.setCacheSizeLimit(opts).then(() => {}),
     }
   : {
       // Fallback stubs when not in GeckoView (shouldn't be used)
@@ -90,6 +98,9 @@ const NativeAudio: NativeAudioPlugin = isGeckoView
       updateMediaMetadata: () => Promise.resolve(),
       updatePlaybackState: () => Promise.resolve(),
       addListener: () => Promise.resolve({ remove: () => {} }),
+      getCacheInfo: () => Promise.resolve({ sizeBytes: 0, fileCount: 0, maxSizeBytes: 0 }),
+      clearCache: () => Promise.resolve(),
+      setCacheSizeLimit: () => Promise.resolve(),
     };
 
 export default NativeAudio;

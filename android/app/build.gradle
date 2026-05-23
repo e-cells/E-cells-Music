@@ -1,16 +1,20 @@
 apply plugin: 'com.android.application'
 
+// 从 package.json 读取版本号，改版本只需改 package.json 一处
+def packageJson = new groovy.json.JsonSlurper().parseText(file('../../package.json').text)
+def appVersionName = packageJson.version
+def appVersionCode = (appVersionName.replaceAll(/\./, '') as int)
+
 android {
-    // 修复 1：移除等号，使用标准 Groovy 语法
     namespace "com.muye.ecells.music"
     compileSdk 36
-    
+
     defaultConfig {
         applicationId "com.muye.ecells.music"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 3
-        versionName "1.0.2"
+        versionCode appVersionCode
+        versionName appVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'

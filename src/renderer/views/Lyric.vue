@@ -1443,6 +1443,11 @@ onUnmounted(() => {
                       ></span>
                     </template>
                   </div>
+                  <div
+                    v-if="playerStore.cacheProgress > 0"
+                    class="absolute rounded-full h-full bg-black/20 dark:bg-white/25 transition-[width] duration-300"
+                    :style="{ width: (playerStore.cacheProgress * 100).toFixed(1) + '%' }"
+                  ></div>
                   <SliderRange class="absolute bg-black dark:bg-white rounded-full h-full" />
                 </SliderTrack>
                 <SliderThumb

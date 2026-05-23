@@ -1,17 +1,29 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import CustomTabBar from '@/components/ui/CustomTabBar.vue';
 import HomeView from '@/views/Home.vue';
 import ExploreView from '@/views/Explore.vue';
+import { useSwipeGesture } from '@/composables/useSwipeGesture';
 import { iconSearch } from '@/icons';
 
 const router = useRouter();
 const subTab = ref(0);
+const contentRef = ref<HTMLElement | null>(null);
 
 const subTabs = ['推荐', '歌单', '排行榜', '新碟上架', '新歌速递', '歌手'];
+const maxSubTab = subTabs.length - 1;
 
 const goToSearch = () => router.push('/main/search');
+
+const { bind: bindSwipe, unbind: unbindSwipe } = useSwipeGesture(contentRef, {
+  onSwipeLeft: () => { subTab.value = subTab.value >= maxSubTab ? 0 : subTab.value + 1; },
+  onSwipeRight: () => { subTab.value = subTab.value <= 0 ? maxSubTab : subTab.value - 1; },
+  threshold: 60,
+});
+
+onMounted(() => bindSwipe());
+onUnmounted(() => unbindSwipe());
 </script>
 
 <template>
@@ -29,7 +41,7 @@ const goToSearch = () => router.push('/main/search');
       </div>
     </div>
 
-    <div class="flex-1 min-h-0 overflow-hidden relative z-10 -mt-[1px]">
+    <div ref="contentRef" class="flex-1 min-h-0 overflow-hidden relative z-10 -mt-[1px]">
       <div v-show="subTab === 0" class="h-full overflow-y-auto pb-safe scrollbar-hide" :class="{ 'view-port': subTab === 0 }">
         <HomeView :show-header="true" />
       </div>

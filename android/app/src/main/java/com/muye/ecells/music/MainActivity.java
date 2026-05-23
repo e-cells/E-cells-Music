@@ -143,6 +143,8 @@ public class MainActivity extends AppCompatActivity {
             assetServer = new AssetServer(this);
             assetServer.startServer();
 
+            AudioCacheManager.initialize(this);
+
             setContentView(R.layout.activity_main);
             geckoView = findViewById(R.id.geckoView);
 

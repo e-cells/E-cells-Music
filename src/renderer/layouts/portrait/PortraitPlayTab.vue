@@ -16,7 +16,7 @@ import { useLyricColorPicker } from '@/utils/useLyricColorPicker';
 import { useSwipeGesture } from '@/composables/useSwipeGesture';
 import { useHardwareBack } from '@/composables/useHardwareBack';
 import { getCoverUrl } from '@/utils/cover';
-import { getCommentCount } from '@/api/comment';
+import { getMusicComments } from '@/api/comment';
 import {
   iconPlay,
   iconPause,
@@ -37,6 +37,7 @@ const {
   playModeIcon,
   cyclePlayMode,
   isQueueDrawerOpen,
+  audioQualityButtonBadge,
 } = usePlayerControls();
 
 const lyricStore = useLyricStore();
@@ -57,26 +58,16 @@ const commentCount = ref(0);
 const fetchCommentCount = async () => {
   const track = currentTrack.value;
   if (!track) { commentCount.value = 0; return; }
-  const hash = track.hash ?? '';
-  if (!hash) { commentCount.value = 0; return; }
+  const mixSongId = track.mixSongId ?? track.id;
+  if (!mixSongId) { commentCount.value = 0; return; }
   try {
-    const res = await getCommentCount(hash);
+    const res = await getMusicComments(mixSongId, 1, 1);
     if (currentTrack.value !== track) return;
-    const record = res && typeof res === 'object' ? res as Record<string, unknown> : null;
-    const data = record?.data && typeof record.data === 'object' ? record.data as Record<string, unknown> : null;
-    if (!data) { commentCount.value = 0; return; }
-    // API 返回格式: { data: { "<hash>": <count> } }
-    const exact = data[hash];
-    if (typeof exact === 'number') { commentCount.value = exact; return; }
-    if (typeof exact === 'string') { const n = Number(exact); if (Number.isFinite(n)) { commentCount.value = n; return; } }
-    // fallback: 忽略大小写匹配
-    const lowerHash = hash.toLowerCase();
-    for (const [key, value] of Object.entries(data)) {
-      if (key.toLowerCase() !== lowerHash) continue;
-      if (typeof value === 'number') { commentCount.value = value; return; }
-      if (typeof value === 'string') { const n = Number(value); if (Number.isFinite(n)) { commentCount.value = n; return; } }
-    }
-    commentCount.value = 0;
+    if (!res || typeof res !== 'object') { commentCount.value = 0; return; }
+    const record = res as Record<string, unknown>;
+    const payload = (record.data && typeof record.data === 'object' ? record.data : record) as Record<string, unknown>;
+    const total = Number(payload.count ?? payload.total ?? record.count ?? record.total ?? 0) || 0;
+    commentCount.value = total;
   } catch { commentCount.value = 0; }
 };
 
@@ -105,6 +96,7 @@ const isPlaying = computed(() => playerStore.isPlaying);
 const hasLyrics = computed(() => lyricStore.lines.length > 0);
 const hasActiveTrack = computed(() => Boolean(currentTrack.value));
 const currentIndex = computed(() => lyricStore.currentIndex);
+
 
 // 迷你歌词五行数据
 const miniPrevPrevLine = computed(() => {
@@ -228,6 +220,10 @@ const progressRatio = computed(() => {
   const d = playerStore.duration;
   if (!d || d <= 0) return 0;
   return Math.min(1, Math.max(0, progressValue.value / d));
+});
+
+const cacheRatio = computed(() => {
+  return Math.min(1, Math.max(0, playerStore.cacheProgress));
 });
 
 const getTimeFromEvent = (e: TouchEvent | MouseEvent): number => {
@@ -388,7 +384,7 @@ onUnmounted(() => {
 
         <div
           v-else-if="coverStyle === 'disc'"
-          class="dvd-cover-wrap dvd-spin"
+          class="dvd-cover-wrap"
           :class="{ 'is-paused': !isPlaying }"
           :style="{ width: `${coverSize}px`, height: `${coverSize}px` }"
         >
@@ -453,10 +449,11 @@ onUnmounted(() => {
     </template>
 
     <template v-else>
+      <div class="lyric-click-shield shrink-0"></div>
       <div
         v-if="hasLyrics"
         ref="lyricListRef"
-        class="lyric-scroll flex-1 min-h-0 overflow-y-auto w-full pt-4"
+        class="lyric-scroll flex-1 min-h-0 overflow-y-auto w-full"
         @touchstart="handleLyricTouchStart"
         @touchend="handleLyricTouchEnd"
       >
@@ -514,6 +511,7 @@ onUnmounted(() => {
           @touchend.prevent="handleProgressTouchEnd"
         >
           <div class="progress-track group-active:h-2 transition-all">
+            <div v-if="cacheRatio > 0" class="progress-cache" :style="{ width: cacheRatio * 100 + '%' }"></div>
             <div class="progress-range" :style="{ width: progressRatio * 100 + '%' }"></div>
             <div class="progress-thumb scale-0 group-active:scale-100 transition-transform" :style="{ left: progressRatio * 100 + '%' }"></div>
           </div>
@@ -550,15 +548,15 @@ onUnmounted(() => {
         <QualityPopover>
           <template #trigger>
             <button type="button" class="extra-btn">
-              <span>音质</span>
+              <span class="relative">音质 <Badge v-if="currentTrack && settingStore.showAudioQualityBadge" :count="audioQualityButtonBadge" class="-right-5" /></span>
             </button>
           </template>
         </QualityPopover>
         <button type="button" class="extra-btn" @click="isQueueDrawerOpen = true">
-          <span class="relative">列表 <Badge v-if="queueSongCount > 0" :count="queueSongCount" class="-right-5" /></span>
+          <span class="relative">列表 <Badge v-if="queueSongCount > 0" :count="queueSongCount > 99 ? '99+' : queueSongCount" class="-right-5" /></span>
         </button>
         <button type="button" class="extra-btn" @click="isCommentDrawerOpen = true">
-          <span class="relative">评论 <Badge v-if="commentCount > 0" :count="commentCount" class="-right-5" /></span>
+          <span class="relative">评论 <Badge v-if="commentCount > 0" :count="commentCount > 99 ? '99+' : commentCount" class="-right-5" /></span>
         </button>
 
         <Popover
@@ -708,8 +706,17 @@ onUnmounted(() => {
   position: relative;
   border-radius: 50%;
   box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.5);
-  /* 性能优化：提前声明需要使用 GPU 层加速渲染 */
+  animation: dvd-rotate 24s linear infinite;
   will-change: transform;
+}
+
+.dvd-cover-wrap.is-paused {
+  animation-play-state: paused;
+}
+
+@keyframes dvd-rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 /* 外围黑胶纹理层 */
@@ -740,25 +747,6 @@ onUnmounted(() => {
     0 0 0 4px rgba(20,20,20,0.8),
     0 0 0 5px rgba(255,255,255,0.1);
   z-index: 2;
-}
-
-/* 光盘旋转动画（纯 CSS 实现，极低性能开销） */
-.dvd-spin {
-  animation: dvd-rotate 24s linear infinite;
-}
-
-.dvd-spin.is-paused {
-  /* 暂停时保持当前角度不回弹，性能优于通过 JS 移除动画 */
-  animation-play-state: paused; 
-}
-
-@keyframes dvd-rotate {
-  from {
-    transform: rotate(0deg) translateZ(0);
-  }
-  to {
-    transform: rotate(360deg) translateZ(0);
-  }
 }
 
 /* ── 呼吸封面 ── */
@@ -847,6 +835,14 @@ onUnmounted(() => {
 
 .mini-lyric-char.is-highlighted {
   color: var(--color-primary);
+}
+
+/* ── 歌词点击屏蔽层 ── */
+.lyric-click-shield {
+  height: 32px;
+  position: relative;
+  z-index: 10;
+  flex-shrink: 0;
 }
 
 /* ── 大屏歌词区 ── */
@@ -951,6 +947,17 @@ onUnmounted(() => {
   border-radius: 4px;
   background: var(--color-primary);
   pointer-events: none;
+}
+
+.progress-cache {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-text-main) 20%, transparent);
+  pointer-events: none;
+  transition: width 0.3s;
 }
 
 .progress-thumb {

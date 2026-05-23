@@ -19,6 +19,7 @@ import android.provider.Settings;
 import android.util.Log;
 
 import java.io.IOException;
+import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.List;
@@ -36,6 +37,8 @@ public class NativeAudioPlugin {
     private double playbackRate = 1.0;
     private Runnable timeUpdateRunnable;
     private Integer pendingSeekMs = null;
+    private String currentCacheKey = null;
+    private boolean playingFromCache = false;
 
     public NativeAudioPlugin(MainActivity activity, Object session) {
         this.activity = activity;
@@ -228,6 +231,9 @@ public class NativeAudioPlugin {
                 case "setFullScreen": return onSetFullScreenSync(params);
                 case "openExternalUrl": return onOpenExternalUrlSync(params);
                 case "openAppSettings": return onOpenAppSettingsSync();
+                case "getCacheInfo": return onGetCacheInfoSync();
+                case "clearCache": return onClearCacheSync();
+                case "setCacheSizeLimit": return onSetCacheSizeLimitSync(params);
                 // Native lyric engine methods
                 case "loadLyrics": return onLoadLyricsSync(params);
                 case "setPlaybackState": return onSetPlaybackStateSync(params);
@@ -249,6 +255,52 @@ public class NativeAudioPlugin {
         if (url == null || url.isEmpty()) return "{\"__nativeError\":\"url is required\"}";
         releasePlayer();
         pendingSeekMs = null;
+        currentCacheKey = null;
+        playingFromCache = false;
+
+        String hash = params.get("hash");
+        String quality = params.get("quality");
+        String dataSource = url;
+
+        AudioCacheManager cacheManager = null;
+        try {
+            cacheManager = AudioCacheManager.getInstance();
+        } catch (Exception e) {
+            Log.w(TAG, "AudioCacheManager not available, skipping cache");
+        }
+
+        if (cacheManager != null && hash != null && !hash.isEmpty()) {
+            String cacheKey = cacheManager.buildCacheKey(hash, quality);
+            currentCacheKey = cacheKey;
+
+            if (cacheKey != null && cacheManager.isCached(cacheKey)) {
+                File cachedFile = cacheManager.getCachedFile(cacheKey);
+                if (cachedFile != null) {
+                    dataSource = cachedFile.getAbsolutePath();
+                    playingFromCache = true;
+                    Log.i(TAG, "Playing from cache: " + cacheKey);
+                }
+            }
+
+            if (!playingFromCache && cacheKey != null) {
+                cacheManager.startDownload(cacheKey, url, new AudioCacheManager.DownloadProgressCallback() {
+                    @Override
+                    public void onProgress(String key, float percent) {
+                        emitEvent("cacheProgress", "{\"cacheKey\":\"" + key + "\",\"percent\":" + percent + "}");
+                    }
+                    @Override
+                    public void onComplete(String key) {
+                        emitEvent("cacheProgress", "{\"cacheKey\":\"" + key + "\",\"percent\":1.0}");
+                    }
+                });
+                Log.i(TAG, "Playing from remote, caching in background: " + cacheKey);
+            }
+
+            if (playingFromCache && cacheKey != null) {
+                emitEvent("cacheProgress", "{\"cacheKey\":\"" + cacheKey + "\",\"percent\":1.0}");
+            }
+        }
+
         try {
             mediaPlayer = new MediaPlayer();
             mediaPlayer.setAudioAttributes(
@@ -268,18 +320,81 @@ public class NativeAudioPlugin {
             });
             mediaPlayer.setOnCompletionListener(mp -> {
                 stopTimeUpdates();
+                if (isPrematureCompletion(mp)) {
+                    handlePrematureCompletion(mp);
+                    return;
+                }
                 emitEvent("ended", "{}");
             });
             mediaPlayer.setOnErrorListener((mp, what, extra) -> {
                 stopTimeUpdates();
+                // If playing from cache failed, try remote URL as fallback
+                if (playingFromCache && currentCacheKey != null) {
+                    Log.w(TAG, "Cache playback failed, falling back to remote: " + currentCacheKey);
+                    int fallbackPosition = 0;
+                    try { fallbackPosition = mp.getCurrentPosition(); } catch (Exception ignored) {}
+                    try {
+                        AudioCacheManager cm = AudioCacheManager.getInstance();
+                        cm.deleteCacheEntry(currentCacheKey);
+                    } catch (Exception ignored) {}
+                    playingFromCache = false;
+                    try {
+                        mp.release();
+                    } catch (Exception ignored) {}
+                    final int seekPosition = fallbackPosition;
+                    mediaPlayer = new MediaPlayer();
+                    mediaPlayer.setAudioAttributes(
+                        new AudioAttributes.Builder()
+                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .build()
+                    );
+                    mediaPlayer.setOnPreparedListener(mp2 -> {
+                        isPrepared = true;
+                        double dur = mp2.getDuration() / 1000.0;
+                        emitEvent("durationChange", "{\"duration\":" + dur + "}");
+                        if (seekPosition > 0) {
+                            mp2.seekTo(seekPosition);
+                        } else if (pendingSeekMs != null) {
+                            mp2.seekTo(pendingSeekMs);
+                            pendingSeekMs = null;
+                        }
+                        mp2.start();
+                        startTimeUpdates();
+                        emitEvent("play", "{}");
+                    });
+                    mediaPlayer.setOnCompletionListener(mp2 -> {
+                        stopTimeUpdates();
+                        if (isPrematureCompletion(mp2)) {
+                            handlePrematureCompletion(mp2);
+                            return;
+                        }
+                        emitEvent("ended", "{}");
+                    });
+                    mediaPlayer.setOnErrorListener((mp2, w, ex) -> {
+                        stopTimeUpdates();
+                        emitEvent("error", "{\"what\":" + w + ",\"extra\":" + ex + "}");
+                        isPrepared = false;
+                        return true;
+                    });
+                    try {
+                        mediaPlayer.setDataSource(url);
+                        mediaPlayer.prepareAsync();
+                        return true;
+                    } catch (IOException e2) {
+                        emitEvent("error", "{\"what\":" + what + ",\"extra\":" + extra + "}");
+                        isPrepared = false;
+                        return true;
+                    }
+                }
                 emitEvent("error", "{\"what\":" + what + ",\"extra\":" + extra + "}");
                 isPrepared = false;
                 return true;
             });
             mediaPlayer.setOnSeekCompleteListener(mp -> {});
-            mediaPlayer.setDataSource(url);
+            mediaPlayer.setDataSource(dataSource);
             mediaPlayer.prepareAsync();
-            return "{\"loaded\":true}";
+            return "{\"loaded\":true,\"fromCache\":" + playingFromCache + "}";
         } catch (IOException e) {
             return "{\"__nativeError\":\"Failed to load audio: " + e.getMessage() + "\"}";
         }
@@ -575,6 +690,41 @@ public class NativeAudioPlugin {
         return "{}";
     }
 
+    // ── Cache management helpers ──
+
+    private String onGetCacheInfoSync() {
+        try {
+            AudioCacheManager cm = AudioCacheManager.getInstance();
+            long sizeBytes = cm.getCacheSize();
+            int fileCount = cm.getCacheFileCount();
+            long maxBytes = cm.getMaxSizeBytes();
+            return "{\"sizeBytes\":" + sizeBytes + ",\"fileCount\":" + fileCount + ",\"maxSizeBytes\":" + maxBytes + "}";
+        } catch (Exception e) {
+            return "{\"sizeBytes\":0,\"fileCount\":0,\"maxSizeBytes\":0}";
+        }
+    }
+
+    private String onClearCacheSync() {
+        try {
+            AudioCacheManager.getInstance().clearCache();
+            return "{\"cleared\":true}";
+        } catch (Exception e) {
+            return "{\"__nativeError\":\"" + e.getMessage() + "\"}";
+        }
+    }
+
+    private String onSetCacheSizeLimitSync(Map<String, String> params) {
+        String mbStr = params.get("mb");
+        if (mbStr == null) return "{\"__nativeError\":\"mb is required\"}";
+        try {
+            long mb = Long.parseLong(mbStr);
+            AudioCacheManager.getInstance().setMaxSize(mb);
+            return "{}";
+        } catch (Exception e) {
+            return "{\"__nativeError\":\"" + e.getMessage() + "\"}";
+        }
+    }
+
     private String onCheckBatteryOptimizationSync() {
         boolean ignoring = false;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -679,6 +829,10 @@ public class NativeAudioPlugin {
 
             mediaPlayer.setOnCompletionListener(mp -> {
                 stopTimeUpdates();
+                if (isPrematureCompletion(mp)) {
+                    handlePrematureCompletion(mp);
+                    return;
+                }
                 emitEvent("ended", "{}");
             });
 
@@ -830,6 +984,43 @@ public class NativeAudioPlugin {
             } catch (Exception e) {
                 Log.w(TAG, "PlaybackParams not supported", e);
             }
+        }
+    }
+
+    // -- Premature completion guard --
+
+    private boolean isPrematureCompletion(MediaPlayer mp) {
+        try {
+            if (mp != null) {
+                int duration = mp.getDuration();
+                int position = mp.getCurrentPosition();
+                if (duration > 0 && position < duration - 3000) {
+                    Log.w(TAG, "Premature onCompletion: pos=" + position + "ms, dur=" + duration + "ms");
+                    return true;
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to check completion position", e);
+        }
+        return false;
+    }
+
+    private void handlePrematureCompletion(MediaPlayer mp) {
+        if (mp == null) {
+            emitEvent("error", "{\"what\":0,\"extra\":0,\"reason\":\"premature_completion\"}");
+            isPrepared = false;
+            return;
+        }
+        try {
+            int position = mp.getCurrentPosition();
+            mp.seekTo(position);
+            mp.start();
+            startTimeUpdates();
+            Log.i(TAG, "Recovered from premature completion at " + position + "ms");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to recover from premature completion", e);
+            emitEvent("error", "{\"what\":0,\"extra\":0,\"reason\":\"premature_completion\"}");
+            isPrepared = false;
         }
     }
 

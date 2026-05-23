@@ -94,7 +94,7 @@ export const createPlaybackManager = (
       isRecovering = false;
       recoveryAttempts = 0;
       applyFailedPlaybackState();
-      if (settingStore.autoNext && (state.currentPlaylist?.length ?? 0) > 0) {
+      if ((state.currentPlaylist?.length ?? 0) > 0) {
         state.autoNextSourceTrackId = String(state.currentTrackId ?? '');
         scheduleAutoNext();
       }
@@ -124,7 +124,7 @@ export const createPlaybackManager = (
   };
 
   const scheduleAutoNext = () => {
-    if (!settingStore.autoNext || !state.currentTrackId) return;
+    if (!state.currentTrackId) return;
     const list =
       (playlistStore.activeQueue?.songs?.length ?? 0) > 0
         ? (playlistStore.activeQueue?.songs ?? [])
@@ -181,7 +181,7 @@ export const createPlaybackManager = (
       state.currentPlaylist = sourceList;
       showPlaybackNotice('track-not-playable', track);
       applyFailedPlaybackState();
-      if (settingStore.autoNext && sourceList.length > 0) {
+      if (sourceList.length > 0) {
         state.autoNextSourceTrackId = resolvedId;
         scheduleAutoNext();
       }
@@ -219,6 +219,8 @@ export const createPlaybackManager = (
     state.isPlaying = false;
     state.isLoading = true;
     state.lastError = null;
+    state.cacheProgress = 0;
+    state.cacheProgressKey = '';
     clearPlaybackNotice();
     state.climaxMarks = [];
 
@@ -262,7 +264,7 @@ export const createPlaybackManager = (
         triggerAutoRecovery();
       } else {
         applyFailedPlaybackState();
-        if (settingStore.autoNext && sourceList.length > 0) {
+        if (sourceList.length > 0) {
           state.autoNextSourceTrackId = resolvedId;
           scheduleAutoNext();
         }
@@ -276,6 +278,12 @@ export const createPlaybackManager = (
     state.currentResolvedAudioEffect = resolved.effect;
     track.audioUrl = resolved.url;
 
+    engine.setSourceMeta(track.hash ?? '', resolved.quality);
+    const hash = track.hash ?? '';
+    const quality = resolved.quality ?? '';
+    if (hash) {
+      state.cacheProgressKey = hash + '_' + (quality || 'default');
+    }
     engine.setSource(resolved.url);
     engine.applyTrackLoudness(resolved.loudness);
     engine.setLoopFile(state.playMode === 'single');
@@ -343,7 +351,7 @@ export const createPlaybackManager = (
         triggerAutoRecovery();
       } else {
         applyFailedPlaybackState({ keepResolvedSource: true });
-        if (settingStore.autoNext && sourceList.length > 0) {
+        if (sourceList.length > 0) {
           state.autoNextSourceTrackId = resolvedId;
           scheduleAutoNext();
         }
@@ -636,6 +644,7 @@ export const createPlaybackManager = (
     clearAutoNextTimer,
     skipToNextAfterFailure,
     scheduleAutoNext,
+    triggerAutoRecovery,
     playTrack,
     togglePlay,
     seek,

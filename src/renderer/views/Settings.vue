@@ -7,7 +7,7 @@ import { ACCENT_PRESETS } from '@/utils/color';
 import { useLyricColorPicker } from '@/utils/useLyricColorPicker';
 import { useLyricStore } from '@/stores/lyric';
 import { useToastStore } from '@/stores/toast';
-import { isGeckoView, NativeLyricBridge } from '@/utils/nativeBridge';
+import { isGeckoView, NativeLyricBridge, NativeAudioBridge } from '@/utils/nativeBridge';
 import { useDesktopLyricStore } from '@/desktopLyric/store';
 import type { AudioQualityValue } from '@/types';
 import type { ThemeMode } from '../../shared/app';
@@ -37,6 +37,7 @@ import {
   iconChevronRight,
   iconWorld,
   iconTypography,
+  iconDatabase,
 } from '@/icons';
 
 const settingStore = useSettingStore();
@@ -235,6 +236,43 @@ const handleAndroidLyricSettingChange = () => {
   });
 };
 
+// ── 缓存管理（Android）──
+const cacheInfo = ref({ sizeBytes: 0, fileCount: 0, maxSizeBytes: 500 * 1024 * 1024 });
+const cacheUsageText = computed(() => {
+  const mb = (cacheInfo.value.sizeBytes / (1024 * 1024)).toFixed(1);
+  const maxMb = (cacheInfo.value.maxSizeBytes / (1024 * 1024)).toFixed(0);
+  return `${mb} MB / ${maxMb} MB（${cacheInfo.value.fileCount} 首歌曲）`;
+});
+
+const refreshCacheInfo = async () => {
+  if (!isGeckoView) return;
+  try {
+    const info = await NativeAudioBridge.getCacheInfo();
+    if (info && typeof info === 'object') {
+      cacheInfo.value = {
+        sizeBytes: info.sizeBytes ?? 0,
+        fileCount: info.fileCount ?? 0,
+        maxSizeBytes: info.maxSizeBytes ?? 500 * 1024 * 1024,
+      };
+    }
+  } catch {}
+};
+
+const handleCacheSizeChange = async (mb: number) => {
+  settingStore.cacheSizeLimitMb = mb;
+  if (isGeckoView) {
+    await NativeAudioBridge.setCacheSizeLimit({ mb }).catch(() => {});
+    await refreshCacheInfo();
+  }
+};
+
+const handleClearCache = async () => {
+  if (!isGeckoView) return;
+  await NativeAudioBridge.clearCache().catch(() => {});
+  await refreshCacheInfo();
+  toastStore.success('缓存已清除');
+};
+
 // ── 远端服务 ──
 const isApiFocused = ref(false);
 const isTestingConnection = ref(false);
@@ -332,6 +370,9 @@ onMounted(() => {
         }
       } catch {}
     }, 2000);
+
+    void refreshCacheInfo();
+    void NativeAudioBridge.setCacheSizeLimit({ mb: settingStore.cacheSizeLimitMb }).catch(() => {});
   }
 });
 
@@ -793,6 +834,48 @@ const handleShowChangelog = async () => {
     <section v-if="isGeckoView" class="space-y-4 sm:space-y-6">
       <div class="flex items-center gap-3">
         <div class="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
+          <Icon :icon="iconDatabase" width="18" height="18" />
+        </div>
+        <h2 class="text-lg font-bold">缓存管理</h2>
+      </div>
+      <div class="settings-card">
+        <div class="settings-item">
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">缓存大小限制</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">
+              超出限制后自动删除最久未播放的缓存（单位：MB）
+            </p>
+          </div>
+          <InputNumber
+            class="w-[110px] sm:w-[140px]"
+            :model-value="settingStore.cacheSizeLimitMb"
+            :min="100"
+            :max="10240"
+            :step="100"
+            @update:model-value="handleCacheSizeChange"
+          />
+        </div>
+        <div class="settings-divider"></div>
+        <div class="settings-item">
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">当前缓存用量</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">
+              {{ cacheUsageText }}
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="xs"
+            class="settings-button whitespace-nowrap"
+            @click="handleClearCache"
+          >清除缓存</Button>
+        </div>
+      </div>
+    </section>
+
+    <section v-if="isGeckoView" class="space-y-4 sm:space-y-6">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
           <Icon :icon="iconPlayerPlay" width="18" height="18" />
         </div>
         <h2 class="text-lg font-bold">桌面歌词</h2>
@@ -966,7 +1049,7 @@ const handleShowChangelog = async () => {
           <Icon :icon="iconInfo" width="18" height="18" />
         </div>
         <h2 class="text-lg font-bold">
-          {{ isGeckoView ? '关于 易格音乐' : '关于 EchoMusic' }}
+          {{ isGeckoView ? '关于 易格音乐' : '关于 易格音乐' }}
         </h2>
       </div>
       <div class="settings-card">
@@ -999,7 +1082,7 @@ const handleShowChangelog = async () => {
         <div class="settings-item">
           <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
             <h3 class="font-semibold text-[15px] sm:text-base truncate">原项目地址</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">开源共享于 GitHub</p>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">EchoMusic</p>
           </div>
           <Button
             variant="ghost"

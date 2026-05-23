@@ -19,6 +19,7 @@ const playerStore = usePlayerStore();
 
 const activeTab = ref(0);
 const prevActiveTab = ref(0);
+const routeBeforePlay = ref<string | null>(null);
 
 const keepAliveRouteNames = computed(() => {
   if (!settingStore.keepAliveEnabled) return ['personal-fm'];
@@ -42,18 +43,29 @@ const tabRootRouteNames = new Set(['home', 'explore']);
 const isTabRoute = computed(() => tabRootRouteNames.has(String(route.name)));
 const hasCurrentTrack = computed(() => !!playerStore.currentTrackId);
 
-// Tab 切换时记住上一个 Tab（用于播放页退出后返回）
+// Tab 切换时记住上一个 Tab 和路由（用于播放页退出后返回）
 watch(activeTab, (val, old) => {
-  if (old !== 1 && val === 1) {
-    // 进入播放页
-  } else if (old === 1 && val !== 1) {
+  if (val === 1 && old !== 1) {
+    // 进入播放页 —— 记住之前的 tab 和路由
     prevActiveTab.value = old;
+    if (!isTabRoute.value) {
+      routeBeforePlay.value = route.fullPath;
+    } else {
+      routeBeforePlay.value = null;
+    }
   }
 });
 
-const handlePlayTabExit = () => {
-  // 退出播放页时回到之前的 Tab
-  activeTab.value = prevActiveTab.value || 0;
+const handlePlayTabExit = async () => {
+  if (routeBeforePlay.value) {
+    // 从详情页进入的播放页 —— 恢复之前的路由
+    const targetRoute = routeBeforePlay.value;
+    routeBeforePlay.value = null;
+    await router.push(targetRoute);
+  } else {
+    // 从 Tab 页进入的播放页 —— 回到之前的 Tab
+    activeTab.value = prevActiveTab.value || 0;
+  }
 };
 
 // 详情页左滑返回
@@ -97,9 +109,11 @@ const handleTabClick = (tab: number) => {
   if (!isTabRoute.value) {
     router.push({ name: 'home' }).then(() => {
       activeTab.value = tab;
+      routeBeforePlay.value = null;
     });
   } else {
     activeTab.value = tab;
+    routeBeforePlay.value = null;
   }
 };
 </script>

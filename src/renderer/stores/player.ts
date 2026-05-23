@@ -114,7 +114,7 @@ export const usePlayerStore = defineStore(
       state.playbackNotice = resolvePlaybackNotice({
         code,
         track,
-        autoNextEnabled: settingStore.autoNext,
+        autoNextEnabled: true,
         autoNextDelaySeconds: settingStore.autoNextDelaySeconds,
       });
     };
@@ -230,6 +230,35 @@ export const usePlayerStore = defineStore(
       let lastHistoryCheck = 0;
       const HISTORY_CHECK_MS = 5000;
 
+      // ── Stall detection ──
+      let lastTimeUpdateAt = 0;
+      let stallCheckTimer: number | null = null;
+      const STALL_TIMEOUT_MS = 5000;
+      const STALL_CHECK_INTERVAL_MS = 3000;
+      const startStallCheck = () => {
+        stopStallCheck();
+        stallCheckTimer = window.setInterval(() => {
+          if (state.isPlaying && !state.isLoading && state.currentTrackId && lastTimeUpdateAt > 0) {
+            const elapsed = Date.now() - lastTimeUpdateAt;
+            if (elapsed > STALL_TIMEOUT_MS) {
+              logger.warn('PlayerStore', 'Stall detected, triggering recovery', {
+                elapsed,
+                currentTime: state.currentTime,
+                trackId: state.currentTrackId,
+              });
+              playbackManager.triggerAutoRecovery();
+              stopStallCheck();
+            }
+          }
+        }, STALL_CHECK_INTERVAL_MS);
+      };
+      const stopStallCheck = () => {
+        if (stallCheckTimer !== null) {
+          window.clearInterval(stallCheckTimer);
+          stallCheckTimer = null;
+        }
+      };
+
       const events: PlayerEngineEvents = {
         timeUpdate: (currentTime) => {
           if (state.isDraggingProgress) return;
@@ -241,6 +270,7 @@ export const usePlayerStore = defineStore(
             return;
           state.seekTargetTime = null;
           state.currentTime = currentTime;
+          lastTimeUpdateAt = Date.now();
           const now = Date.now();
           if (now - lastHistoryCheck >= HISTORY_CHECK_MS) {
             state.lastPlayTime = currentTime;
@@ -264,31 +294,44 @@ export const usePlayerStore = defineStore(
           }
         },
         ended: () => {
+          stopStallCheck();
           if (!state.recentSeekIgnoreEnd) handlePlaybackEnded();
           else state.recentSeekIgnoreEnd = false;
         },
         play: () => {
           state.isPlaying = true;
           state.isLoading = false;
+          lastTimeUpdateAt = Date.now();
+          startStallCheck();
           clearPlaybackNotice(state.currentTrackId);
           settingStore.syncPreventSleep(true);
           engine.updateMediaPlaybackState(buildMediaState(state));
         },
         pause: () => {
           state.isPlaying = false;
+          stopStallCheck();
           settingStore.syncPreventSleep(false);
           engine.updateMediaPlaybackState(buildMediaState(state));
         },
         error: (event) => {
           if (event && !event.isTrusted && !(event as any)?.detail && !(event as any)?.fromEngine)
             return;
+          stopStallCheck();
           state.lastError = (event as any)?.type ?? 'playback-error';
           showPlaybackNotice('playback-failed', state.currentTrackSnapshot);
           playbackManager.applyFailedPlaybackState({ keepResolvedSource: true });
           settingStore.syncPreventSleep(false);
-          if (settingStore.autoNext && state.currentPlaylist?.length)
+          if (state.currentTrackId) {
+            playbackManager.triggerAutoRecovery();
+          }
+          if (state.currentPlaylist?.length)
             playbackManager.scheduleAutoNext();
           else playbackManager.clearAutoNextTimer();
+        },
+        cacheProgress: (data) => {
+          if (data.cacheKey === state.cacheProgressKey) {
+            state.cacheProgress = data.percent;
+          }
         },
       };
       engine.setEvents(events);

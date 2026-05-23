@@ -58,7 +58,6 @@ export const useSettingStore = defineStore('setting', {
     lyricAutoCollapseDelay: 5,
     lyricAutoCollapseEnabled: true,
     lyricAdaptiveColor: true,
-    autoNext: false,
     autoNextDelaySeconds: 3,
     autoNextMaxAttempts: 10,
     preventSleep: true,
@@ -104,6 +103,8 @@ export const useSettingStore = defineStore('setting', {
     showStatusBar: true,
     // 竖屏播放封面样式
     portraitCoverStyle: 'disc' as PortraitCoverStyle,
+    // 缓存设置（Android）
+    cacheSizeLimitMb: 500,
   }),
   actions: {
     setTheme(theme: ThemeMode) {

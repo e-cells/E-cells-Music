@@ -48,6 +48,8 @@ export const createPlayerState = () => ({
   seekTimestamp: 0,
   isResuming: false,
   lastPlayTime: 0,
+  cacheProgress: 0,
+  cacheProgressKey: '',
 });
 
 export type PlayerState = ReturnType<typeof createPlayerState>;

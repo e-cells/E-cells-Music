@@ -10,6 +10,7 @@ export interface PlayerEngineEvents {
   play?: () => void;
   pause?: () => void;
   error?: (event: Event) => void;
+  cacheProgress?: (data: { cacheKey: string; percent: number }) => void;
 }
 
 export interface MediaSessionMeta {
@@ -62,6 +63,8 @@ export class PlayerEngine {
   private referenceLufs = DEFAULT_REFERENCE_LUFS;
   private lastTrackLoudness: TrackLoudness | null = null;
   private cleanupFns: Array<() => void> = [];
+  private sourceHash = '';
+  private sourceQuality = '';
   private lastMediaStateStatus = '';
   private lastTimelineSyncMs = 0;
   private lastTimeUpdateMs = 0;
@@ -117,6 +120,14 @@ export class PlayerEngine {
         const evt = new Event('error');
         (evt as any).fromEngine = true;
         this.events.error?.(evt);
+      }),
+      NativeAudio.addListener('cacheProgress', (data: any) => {
+        if (data && typeof data.percent === 'number') {
+          this.events.cacheProgress?.({
+            cacheKey: data.cacheKey ?? '',
+            percent: data.percent,
+          });
+        }
       }),
     ];
     Promise.all(events).then((listeners) => {
@@ -232,7 +243,11 @@ export class PlayerEngine {
         mpv!.load(url);
       }
     } else if (useNativeAudio) {
-      NativeAudio.loadAudio({ url }).catch((err) => {
+      NativeAudio.loadAudio({
+        url,
+        ...(this.sourceHash ? { hash: this.sourceHash } : {}),
+        ...(this.sourceQuality ? { quality: this.sourceQuality } : {}),
+      }).catch((err) => {
         logger.error('PlayerEngine', 'Native loadAudio error', { err });
         const evt = new Event('error');
         (evt as any).fromEngine = true;
@@ -422,6 +437,11 @@ export class PlayerEngine {
     }
   }
 
+  setSourceMeta(hash: string, quality: string | null): void {
+    this.sourceHash = hash;
+    this.sourceQuality = quality ?? '';
+  }
+
   reset(): void {
     if (hasMpv) {
       mpv!.stop();
@@ -431,6 +451,8 @@ export class PlayerEngine {
       this.unloadHowl();
     }
     this.sourceUrl = '';
+    this.sourceHash = '';
+    this.sourceQuality = '';
     this.durationValue = 0;
     this.lastTimeValue = -1;
     this.events.durationChange?.(0);

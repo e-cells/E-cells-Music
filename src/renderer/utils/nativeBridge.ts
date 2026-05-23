@@ -69,7 +69,7 @@ export function addListener(eventName: string, listener: (data: any) => void): {
 }
 
 export const NativeAudioBridge = {
-  loadAudio: (options: { url: string }) => nativeCall('loadAudio', options),
+  loadAudio: (options: { url: string; hash?: string; quality?: string }) => nativeCall('loadAudio', options),
   play: () => nativeCall('play'),
   pause: () => nativeCall('pause'),
   stop: () => nativeCall('stop'),
@@ -88,6 +88,9 @@ export const NativeAudioBridge = {
   }) => nativeCall('updateMediaMetadata', options),
   updatePlaybackState: (options: { isPlaying: boolean; positionMs: number; durationMs: number }) =>
     nativeCall('updateMediaPlaybackState', options),
+  getCacheInfo: () => nativeCall('getCacheInfo'),
+  clearCache: () => nativeCall('clearCache'),
+  setCacheSizeLimit: (options: { mb: number }) => nativeCall('setCacheSizeLimit', options),
   addListener,
 };
 

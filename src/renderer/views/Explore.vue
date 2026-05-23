@@ -1,6 +1,6 @@
 <script setup lang="ts">
 defineOptions({ name: 'explore' });
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, onActivated, onDeactivated, reactive, ref, watch, nextTick } from 'vue';
 import { extractAlbumGroups, extractList } from '@/utils/extractors';
 import { usePlaylistStore } from '@/stores/playlist';
 import { usePlayerStore } from '@/stores/player';
@@ -525,9 +525,48 @@ const handleNewSongSort = (field: SortField) => {
   }
 };
 
+// ------ 新增：处理虚拟列表在局部滚动容器中的事件丢失问题 ------
+let scrollTarget: HTMLElement | null = null;
+
+const handleViewportScroll = () => {
+  // 核心：强制触发 window 的 scroll 事件，让 SongList 的虚拟列表能更新渲染区间
+  window.dispatchEvent(new CustomEvent('scroll'));
+};
+
+const attachScrollTarget = async () => {
+  await nextTick();
+  scrollTarget = document.querySelector('.view-port') as HTMLElement | null;
+  if (scrollTarget) {
+    scrollTarget.addEventListener('scroll', handleViewportScroll, { passive: true });
+    // 初始化触发一次，确保初始首屏计算正确
+    handleViewportScroll();
+  }
+};
+
+const detachScrollTarget = () => {
+  if (scrollTarget) {
+    scrollTarget.removeEventListener('scroll', handleViewportScroll);
+    scrollTarget = null;
+  }
+};
+// ---------------------------------------------------------------
+
 onMounted(() => {
   void loadPlaylistCategories();
   void loadRecommendedPlaylists();
+  void attachScrollTarget(); // 挂载时绑定代理事件
+});
+
+onUnmounted(() => {
+  detachScrollTarget(); // 卸载时解绑代理事件
+});
+
+onActivated(() => {
+  void attachScrollTarget(); // 缓存激活时重新绑定
+});
+
+onDeactivated(() => {
+  detachScrollTarget(); // 缓存失活时解绑
 });
 
 watch(
@@ -655,8 +694,8 @@ const filteredArtistCards = computed(() => {
 
 <template>
   <div
-    class="explore-view pb-10 min-h-screen bg-bg-main"
-    :class="[showHeader ? 'px-4 md:px-10 pt-4' : 'px-4 pt-1']"
+    class="explore-view bg-bg-main"
+    :class="[showHeader ? 'px-4 md:px-10 pt-4 pb-10 min-h-screen' : 'px-4 pt-1 h-full']"
   >
     <div v-if="showHeader" class="explore-header sticky top-0 z-[130] bg-bg-main/90 backdrop-blur-xl border-b border-border-light/10 pb-2 -mx-4 px-4 md:-mx-10 md:px-10">
       <div class="text-[26px] font-bold text-text-main tracking-tight mt-2">
@@ -677,7 +716,7 @@ const filteredArtistCards = computed(() => {
       <div v-if="loadingPlaylists" class="flex items-center justify-center py-20">
         <div class="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
       </div>
-      <div v-else class="mt-4 pb-safe">
+      <div v-else :class="['mt-4', showHeader ? 'pb-safe' : 'pb-4']">
         <VirtualGrid
           :items="recommendedPlaylistCards"
           :loading="false"
@@ -743,7 +782,7 @@ const filteredArtistCards = computed(() => {
         </div>
       </div>
 
-      <div class="pb-safe">
+      <div :class="[showHeader ? 'pb-safe' : 'pb-4']">
         <div v-if="loadingRankSongs" class="flex items-center justify-center py-20">
           <div class="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
         </div>
@@ -779,7 +818,7 @@ const filteredArtistCards = computed(() => {
       <div v-else-if="albumCards.length === 0" class="py-20 text-center opacity-50 text-[14px]">
         暂无相关专辑
       </div>
-      <div v-else class="mt-4 pb-safe">
+      <div v-else :class="['mt-4', showHeader ? 'pb-safe' : 'pb-4']">
         <VirtualGrid
           :items="albumCards"
           :loading="false"
@@ -852,7 +891,7 @@ const filteredArtistCards = computed(() => {
         </div>
       </div>
 
-      <div class="pb-safe">
+      <div :class="[showHeader ? 'pb-safe' : 'pb-4']">
         <div v-if="loadingNewSongs" class="flex items-center justify-center py-20">
           <div class="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
         </div>
@@ -904,7 +943,7 @@ const filteredArtistCards = computed(() => {
           >{{ letter }}</span>
         </div>
 
-        <div class="mt-4 pb-safe">
+        <div :class="['mt-4', showHeader ? 'pb-safe' : 'pb-4']">
           <VirtualGrid
             :items="filteredArtistCards"
             :loading="false"

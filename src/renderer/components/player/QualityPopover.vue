@@ -41,32 +41,34 @@ withDefaults(defineProps<Props>(), {
     content-class="quality-popover"
   >
     <template #trigger>
-      <Button
-        variant="unstyled"
-        size="none"
-        type="button"
-        class="p-2 transition-all"
-        :class="
-          player.currentAudioQualityOverride !== null
-            ? variant === 'lyric'
-              ? 'text-black dark:text-white hover:scale-110 active:scale-90'
-              : 'text-primary hover:scale-110 active:scale-90'
-            : variant === 'lyric'
-              ? 'text-black/40 dark:text-white/40 hover:scale-110 active:scale-90'
-              : 'text-text-main/50 hover:text-primary hover:scale-110 active:scale-90'
-        "
-        title="音质"
-      >
-        <span class="relative inline-flex w-5 h-5 items-center justify-center">
-          <AudioWaveIcon class="w-5 h-5" style="transform: translateY(3px)" />
-          <Badge
-            v-if="currentTrack && settingStore.showAudioQualityBadge"
-            :count="audioQualityButtonBadge"
-            class="absolute -top-2"
-            :style="{ right: '-12px' }"
-          />
-        </span>
-      </Button>
+      <slot name="trigger">
+        <Button
+          variant="unstyled"
+          size="none"
+          type="button"
+          class="p-2 transition-all"
+          :class="
+            player.currentAudioQualityOverride !== null
+              ? variant === 'lyric'
+                ? 'text-black dark:text-white hover:scale-110 active:scale-90'
+                : 'text-primary hover:scale-110 active:scale-90'
+              : variant === 'lyric'
+                ? 'text-black/40 dark:text-white/40 hover:scale-110 active:scale-90'
+                : 'text-text-main/50 hover:text-primary hover:scale-110 active:scale-90'
+          "
+          title="音质"
+        >
+          <span class="relative inline-flex w-5 h-5 items-center justify-center">
+            <AudioWaveIcon class="w-5 h-5" style="transform: translateY(3px)" />
+            <Badge
+              v-if="currentTrack && settingStore.showAudioQualityBadge"
+              :count="audioQualityButtonBadge"
+              class="absolute -top-2"
+              :style="{ right: '-12px' }"
+            />
+          </span>
+        </Button>
+      </slot>
     </template>
     <div class="space-y-1">
       <div class="pm-title">音质选择</div>

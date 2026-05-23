@@ -30,10 +30,10 @@ const goToSearch = () => router.push('/main/search');
     </div>
 
     <div class="flex-1 min-h-0 overflow-hidden relative z-10 -mt-[1px]">
-      <div v-show="subTab === 0" class="h-full overflow-y-auto pb-safe scrollbar-hide">
+      <div v-show="subTab === 0" class="h-full overflow-y-auto pb-safe scrollbar-hide" :class="{ 'view-port': subTab === 0 }">
         <HomeView :show-header="true" />
       </div>
-      <div v-show="subTab !== 0" class="h-full overflow-y-auto pb-safe scrollbar-hide">
+      <div v-show="subTab !== 0" class="h-full overflow-y-auto pb-safe scrollbar-hide" :class="{ 'view-port': subTab !== 0 }">
         <ExploreView :initial-tab="subTab - 1" :show-header="false" />
       </div>
     </div>

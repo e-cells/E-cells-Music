@@ -329,9 +329,9 @@ onActivated(() => {
 
       <section v-else class="flex flex-col md:flex-row gap-10 md:gap-16 lg:gap-24 max-w-7xl mx-auto items-center md:items-start justify-center">
         
-        <div class="flex-shrink-0 w-full max-w-[320px] md:max-w-[400px] flex flex-col items-center gap-8">
-          <div 
-            class="cover-wrapper relative w-full aspect-square rounded-[32px] overflow-hidden shadow-2xl transition-transform duration-300"
+        <div class="flex-shrink-0 w-full max-w-[200px] md:max-w-[300px] flex flex-col items-center gap-5">
+          <div
+            class="cover-wrapper relative w-full aspect-square rounded-[24px] overflow-hidden shadow-2xl transition-transform duration-300"
             :class="{ 'scale-[1.02] shadow-primary/20': isPersonalFmPlaying }"
             @click="handlePlayPersonalFm"
           >
@@ -348,8 +348,8 @@ onActivated(() => {
             <div 
               class="absolute inset-0 bg-black/20 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity cursor-pointer backdrop-blur-[2px]"
             >
-              <div class="w-16 h-16 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center text-white">
-                <Icon :icon="isPersonalFmPlaying ? iconPause : iconPlay" width="32" height="32" />
+              <div class="w-12 h-12 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center text-white">
+                <Icon :icon="isPersonalFmPlaying ? iconPause : iconPlay" width="24" height="24" />
               </div>
             </div>
           </div>

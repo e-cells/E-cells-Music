@@ -848,7 +848,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="search-view relative pb-10 min-h-screen bg-bg-main">
+  <div class="search-view relative bg-bg-main" :class="isGeckoView ? 'pb-4' : 'pb-10 min-h-screen'">
     
     <div v-if="showPinnedTabs" class="search-pinned-tabs sticky top-0 z-[140] backdrop-blur-xl bg-bg-main/75 border-b border-border-light/15 shadow-sm">
       <div class="px-4 md:px-10 py-2 pt-safe">
@@ -859,10 +859,10 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <div v-show="!showPinnedTabs" class="px-4 md:px-10 pt-safe">
-      <div v-if="!isGeckoView" class="text-[26px] font-bold text-text-main tracking-tight mt-4">搜索</div>
+    <div v-show="!showPinnedTabs" class="px-4 md:px-10" :class="isGeckoView ? '' : 'pt-safe'">
+      <div v-if="!isGeckoView" class="text-[26px] font-bold text-text-main tracking-tight mt-1 md:mt-4">搜索</div>
 
-      <div class="search-input-shell mt-4" :class="{ 'has-suggestions': showSuggestions }">
+      <div class="search-input-shell md:mt-4" :class="[isGeckoView ? '' : 'mt-2', { 'has-suggestions': showSuggestions }]">
         <div class="search-input-wrap shadow-sm">
           <Icon :icon="iconSearch" width="20" height="20" class="search-input-icon ml-2" />
           <input
@@ -942,7 +942,7 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <div v-if="hasSearched" class="mt-6 mb-2">
+      <div v-if="hasSearched" :class="isGeckoView ? 'mt-1 mb-0' : 'mt-3 mb-1 md:mt-6 md:mb-2'">
         <CustomTabBar
           v-model="activeTabIndex"
           :tabs="['单曲', '歌单', '专辑', '歌手', '歌词', 'MV']"
@@ -950,7 +950,7 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <div v-if="!hasSearched" class="px-4 md:px-10 pt-4">
+    <div v-if="!hasSearched" class="px-4 md:px-10 pt-2 md:pt-4">
       <div v-if="isLoadingHot" class="search-placeholder">加载中...</div>
       <template v-else>
         <div v-if="searchHistory.length > 0" class="search-section mt-2">

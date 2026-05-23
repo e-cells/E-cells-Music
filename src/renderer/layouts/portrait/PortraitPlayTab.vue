@@ -6,14 +6,17 @@ import PlayerQueueDrawer from '@/components/music/PlayerQueueDrawer.vue';
 import CommentDrawer from '@/components/music/CommentDrawer.vue';
 import Popover from '@/components/ui/Popover.vue';
 import Slider from '@/components/ui/Slider.vue';
+import Badge from '@/components/ui/Badge.vue';
 import ColorPickerDialog from '@/components/ui/ColorPickerDialog.vue';
 import { usePlayerControls } from '@/utils/usePlayerControls';
+import { usePlaylistStore } from '@/stores/playlist';
 import { useLyricStore } from '@/stores/lyric';
 import { useSettingStore } from '@/stores/setting';
 import { useLyricColorPicker } from '@/utils/useLyricColorPicker';
 import { useSwipeGesture } from '@/composables/useSwipeGesture';
-import { useHardwareBack } from '@/composables/useHardwareBack'; 
+import { useHardwareBack } from '@/composables/useHardwareBack';
 import { getCoverUrl } from '@/utils/cover';
+import { getCommentCount } from '@/api/comment';
 import {
   iconPlay,
   iconPause,
@@ -21,7 +24,6 @@ import {
   iconSkipForward,
   iconHeart,
   iconHeartFilled,
-  iconSlidersHorizontal,
 } from '@/icons';
 
 const props = defineProps<{ active?: boolean }>();
@@ -39,6 +41,7 @@ const {
 
 const lyricStore = useLyricStore();
 const settingStore = useSettingStore();
+const playlistStore = usePlaylistStore();
 const coverStyle = computed(() => settingStore.portraitCoverStyle);
 
 const rootRef = ref<HTMLElement | null>(null);
@@ -47,6 +50,35 @@ const isUserScrollingLyrics = ref(false);
 const showLyrics = ref(false);
 const isCommentDrawerOpen = ref(false);
 let userScrollResumeTimer: number | null = null;
+
+const queueSongCount = computed(() => playlistStore.defaultList.length);
+const commentCount = ref(0);
+
+const fetchCommentCount = async () => {
+  const track = currentTrack.value;
+  if (!track) { commentCount.value = 0; return; }
+  const hash = track.hash ?? '';
+  if (!hash) { commentCount.value = 0; return; }
+  try {
+    const res = await getCommentCount(hash);
+    if (currentTrack.value !== track) return;
+    const record = res && typeof res === 'object' ? res as Record<string, unknown> : null;
+    const data = record?.data && typeof record.data === 'object' ? record.data as Record<string, unknown> : null;
+    if (!data) { commentCount.value = 0; return; }
+    // API 返回格式: { data: { "<hash>": <count> } }
+    const exact = data[hash];
+    if (typeof exact === 'number') { commentCount.value = exact; return; }
+    if (typeof exact === 'string') { const n = Number(exact); if (Number.isFinite(n)) { commentCount.value = n; return; } }
+    // fallback: 忽略大小写匹配
+    const lowerHash = hash.toLowerCase();
+    for (const [key, value] of Object.entries(data)) {
+      if (key.toLowerCase() !== lowerHash) continue;
+      if (typeof value === 'number') { commentCount.value = value; return; }
+      if (typeof value === 'string') { const n = Number(value); if (Number.isFinite(n)) { commentCount.value = n; return; } }
+    }
+    commentCount.value = 0;
+  } catch { commentCount.value = 0; }
+};
 
 // 手势：向下滑动依然可以退出播放页
 const { bind: bindSwipe, unbind: unbindSwipe } = useSwipeGesture(rootRef, {
@@ -286,7 +318,7 @@ watch(
   },
 );
 
-watch(currentTrackLyricHash, () => ensureLyrics());
+watch(currentTrackLyricHash, () => { ensureLyrics(); fetchCommentCount(); });
 watch(currentIndex, () => nextTick(() => scrollToCurrentLine(true)));
 watch(
   () => props.active,
@@ -300,6 +332,7 @@ watch(
 onMounted(() => {
   bindSwipe();
   ensureLyrics();
+  fetchCommentCount();
 });
 
 onUnmounted(() => {
@@ -522,10 +555,10 @@ onUnmounted(() => {
           </template>
         </QualityPopover>
         <button type="button" class="extra-btn" @click="isQueueDrawerOpen = true">
-          <span>列表</span>
+          <span class="relative">列表 <Badge v-if="queueSongCount > 0" :count="queueSongCount" class="-right-5" /></span>
         </button>
         <button type="button" class="extra-btn" @click="isCommentDrawerOpen = true">
-          <span>评论</span>
+          <span class="relative">评论 <Badge v-if="commentCount > 0" :count="commentCount" class="-right-5" /></span>
         </button>
 
         <Popover
@@ -538,7 +571,7 @@ onUnmounted(() => {
         >
           <template #trigger>
             <button type="button" class="extra-btn">
-              <Icon :icon="iconSlidersHorizontal" width="16" height="16" />
+              <span>字体</span>
             </button>
           </template>
           <div class="portrait-lyric-settings space-y-5">

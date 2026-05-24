@@ -137,4 +137,6 @@ export const NativeOrientationBridge = {
     nativeCall('setOrientation', { orientation }),
   setFullScreen: (fullscreen: boolean) =>
     nativeCall('setFullScreen', { fullscreen: String(fullscreen) }),
+  setKeepScreenOn: (keepOn: boolean) =>
+    nativeCall('setKeepScreenOn', { keepOn: String(keepOn) }),
 };

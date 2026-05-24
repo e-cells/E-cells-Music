@@ -318,6 +318,7 @@ public class LyricOverlayService extends Service {
         line2 = null;
         lockIcon = null;
         isVisible = false;
+        stopNativeLyricTimer();
         prefs.edit().putBoolean("enabled", false).apply();
         Log.i(TAG, "Overlay hidden");
     }
@@ -356,16 +357,11 @@ public class LyricOverlayService extends Service {
         this.basePlaybackMs = currentTimeMs;
         this.baseSystemMs = System.currentTimeMillis();
         this.isPlaying = playing;
-        handler.post(() -> {
-            if (playing && !lyrics.isEmpty()) {
-                long pos = getCurrentPlaybackPosition();
-                int newIndex = findLineIndex(pos);
-                if (newIndex != currentLineIndex) {
-                    currentLineIndex = newIndex;
-                    updateOverlayFromLyrics();
-                }
-            }
-        });
+        if (playing) {
+            startNativeLyricTimer();
+        } else {
+            stopNativeLyricTimer();
+        }
     }
 
     public void seekTo(long timeMs) {
@@ -397,6 +393,7 @@ public class LyricOverlayService extends Service {
 
     private void startNativeLyricTimer() {
         stopNativeLyricTimer();
+        if (!isPlaying || lyrics.isEmpty()) return;
         lyricTimerRunnable = new Runnable() {
             @Override
             public void run() {
@@ -408,7 +405,7 @@ public class LyricOverlayService extends Service {
                         updateOverlayFromLyrics();
                     }
                 }
-                handler.postDelayed(this, 10);
+                handler.postDelayed(this, 200);
             }
         };
         handler.post(lyricTimerRunnable);

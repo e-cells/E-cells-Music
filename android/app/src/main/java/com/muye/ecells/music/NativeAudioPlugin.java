@@ -238,6 +238,7 @@ public class NativeAudioPlugin {
                 case "loadLyrics": return onLoadLyricsSync(params);
                 case "setPlaybackState": return onSetPlaybackStateSync(params);
                 case "lyricSeekTo": return onLyricSeekToSync(params);
+                case "setKeepScreenOn": return onSetKeepScreenOnSync(params);
                 default:
                     return "{\"__nativeError\":\"Unknown method: " + method + "\"}";
             }
@@ -794,6 +795,12 @@ public class NativeAudioPlugin {
         if (service != null) {
             service.seekTo(timeMs);
         }
+        return "{}";
+    }
+
+    private String onSetKeepScreenOnSync(Map<String, String> params) {
+        boolean keepOn = "true".equals(params.get("keepOn"));
+        activity.setKeepScreenOn(keepOn);
         return "{}";
     }
 

@@ -89,6 +89,7 @@ onUnmounted(() => {
   colorSchemeMediaQuery = null;
   systemThemeListener?.remove();
   systemThemeListener = null;
+  document.removeEventListener('visibilitychange', handleVisibilityChange);
 });
 
 watch(() => settings.theme, updateTheme);
@@ -115,6 +116,12 @@ watch(
     void themeStore.refreshFromCover(getCoverUrl(coverUrl, 300));
   },
 );
+
+// 后台时暂停所有 CSS 动画，节省 GPU/CPU
+const handleVisibilityChange = () => {
+  document.documentElement.classList.toggle('document-hidden', document.hidden);
+};
+document.addEventListener('visibilitychange', handleVisibilityChange);
 </script>
 
 <template>

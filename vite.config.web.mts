@@ -11,6 +11,13 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, 'index.html'),
       },
+      output: {
+        manualChunks: {
+          'vendor-vue': ['vue', 'vue-router', 'pinia'],
+          'vendor-crypto': ['crypto-js'],
+          'vendor-marked': ['marked'],
+        },
+      },
     },
   },
   plugins: [vue(), tailwindcss()],

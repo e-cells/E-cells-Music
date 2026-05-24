@@ -107,7 +107,7 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        // FLAG_KEEP_SCREEN_ON 已移除，通过 native://setKeepScreenOn bridge 按需开启
 
         int orientation = getResources().getConfiguration().orientation;
         lastNightMode = getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
@@ -135,9 +135,7 @@ public class MainActivity extends AppCompatActivity {
             sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
             if (sensorManager != null) {
                 lightSensor = sensorManager.getDefaultSensor(Sensor.TYPE_LIGHT);
-                if (lightSensor != null) {
-                    sensorManager.registerListener(lightSensorListener, lightSensor, SensorManager.SENSOR_DELAY_NORMAL);
-                }
+                registerLightSensorIfNeeded();
             }
 
             assetServer = new AssetServer(this);
@@ -249,19 +247,41 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    // === 新增：处理模式切换的方法 ===
-    public void setThemeAutoMode(String mode) {
-        if (mode == null) return;
-        this.themeAutoMode = mode;
-        Log.i(TAG, "主题自动切换模式设置为: " + mode);
-        
-        // 模式切换后，立刻执行一次刷新，应用新模式下的状态
-        runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                pushSystemThemeToFrontend();
+    public void setKeepScreenOn(boolean keepOn) {
+        runOnUiThread(() -> {
+            if (keepOn) {
+                getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            } else {
+                getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             }
         });
+    }
+
+    private void registerLightSensorIfNeeded() {
+        if (sensorManager != null && lightSensor != null && "sensor".equals(themeAutoMode)) {
+            sensorManager.registerListener(lightSensorListener, lightSensor, SensorManager.SENSOR_DELAY_NORMAL);
+        }
+    }
+
+    private void unregisterLightSensor() {
+        if (sensorManager != null && lightSensorListener != null) {
+            sensorManager.unregisterListener(lightSensorListener);
+        }
+    }
+
+    public void setThemeAutoMode(String mode) {
+        if (mode == null) return;
+        String oldMode = this.themeAutoMode;
+        this.themeAutoMode = mode;
+        Log.i(TAG, "主题自动切换模式设置为: " + mode);
+
+        if ("sensor".equals(mode) && !"sensor".equals(oldMode)) {
+            registerLightSensorIfNeeded();
+        } else if (!"sensor".equals(mode) && "sensor".equals(oldMode)) {
+            unregisterLightSensor();
+        }
+
+        runOnUiThread(() -> pushSystemThemeToFrontend());
     }
 
     void evalJs(String script) {
@@ -322,8 +342,20 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        if ("sensor".equals(themeAutoMode)) {
+            registerLightSensorIfNeeded();
+        }
         evalJs("if(window.NativeBridge&&window.NativeBridge._listeners['onActivityResume']){window.NativeBridge._listeners['onActivityResume'].forEach(function(cb){cb();});}");
         pushSystemThemeToFrontend();
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if ("sensor".equals(themeAutoMode)) {
+            unregisterLightSensor();
+        }
+        evalJs("if(window.NativeBridge&&window.NativeBridge._listeners['onActivityPause']){window.NativeBridge._listeners['onActivityPause'].forEach(function(cb){cb();});}");
     }
 
     @Override

@@ -518,3 +518,10 @@ body.accent-scoped .main-layout .player-bar-container {
     transparent 100%
   );
 }
+
+/* 后台时暂停所有 CSS 动画，节省 GPU/CPU */
+html.document-hidden *,
+html.document-hidden *::before,
+html.document-hidden *::after {
+  animation-play-state: paused !important;
+}

@@ -308,7 +308,13 @@ export const applyAccentToRoot = (hex: string, isDark: boolean) => {
     lastAppliedRgb = currentRgb;
 
     if (progress < 1) {
-      animationFrameId = requestAnimationFrame(animate);
+      if (document.hidden) {
+        setAccentVars(toRgb, isDark);
+        lastAppliedRgb = toRgb;
+        animationFrameId = null;
+      } else {
+        animationFrameId = requestAnimationFrame(animate);
+      }
     } else {
       animationFrameId = null;
     }

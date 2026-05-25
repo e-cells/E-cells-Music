@@ -1,0 +1,23 @@
+{
+  "name": "EchoMusic",
+  "short_name": "EchoMusic",
+  "description": "简约、精致、功能强大的第三方音乐播放器",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#030406",
+  "theme_color": "#030406",
+  "orientation": "any",
+  "categories": ["music", "entertainment"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

@@ -1,0 +1,335 @@
+<script setup lang="ts">
+defineOptions({ name: 'recommend-songs' });
+import { computed, onMounted, ref } from 'vue';
+import { getEverydayRecommend } from '@/api/music';
+import { extractList } from '@/utils/extractors';
+import { usePlaylistStore } from '@/stores/playlist';
+import type { Song } from '@/models/song';
+import { usePlayerStore } from '@/stores/player';
+import { useSettingStore } from '@/stores/setting';
+import SliverHeader from '@/components/music/DetailPageSliverHeader.vue';
+import ActionRow from '@/components/music/DetailPageActionRow.vue';
+import SongList from '@/components/music/SongList.vue';
+import SongListHeader from '@/components/music/SongListHeader.vue';
+import BatchActionDrawer from '@/components/music/BatchActionDrawer.vue';
+import { mapTopSong } from '@/utils/mappers';
+import type { SortField, SortOrder } from '@/components/music/SongListHeader.vue';
+import { iconPlay, iconList, iconCurrentLocation, iconSearch } from '@/icons';
+import { replaceQueueAndPlay } from '@/utils/playback';
+import Button from '@/components/ui/Button.vue';
+import Badge from '@/components/ui/Badge.vue';
+import { isGeckoView } from '@/utils/nativeBridge';
+
+const playlistStore = usePlaylistStore();
+const playerStore = usePlayerStore();
+const settingStore = useSettingStore();
+
+const isPortrait = isGeckoView;
+
+const loading = ref(true);
+const songs = ref<Song[]>([]);
+const showBatchDrawer = ref(false);
+const searchQuery = ref('');
+const songListRef = ref<{ scrollToActive?: () => void } | null>(null);
+
+const sortField = ref<SortField | null>(null);
+const sortOrder = ref<SortOrder>(null);
+
+const todayLabel = computed(() => new Date().getDate().toString());
+
+const recommendCoverUrl = computed(() => {
+  const dayText = todayLabel.value;
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="400" height="400">
+      <defs>
+        <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#0071E3" />
+          <stop offset="100%" stop-color="#5AC8FA" />
+        </linearGradient>
+      </defs>
+      <rect width="400" height="400" rx="60" fill="url(#g)" />
+      <text x="50%" y="62%" text-anchor="middle" fill="#FFFFFF" font-size="160" font-weight="700" font-family="SF Pro Display, PingFang SC, Arial">
+        ${dayText}
+      </text>
+    </svg>
+  `;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+});
+
+const handleSort = (field: SortField) => {
+  if (sortField.value === field) {
+    if (sortOrder.value === 'asc') {
+      sortOrder.value = 'desc';
+    } else if (sortOrder.value === 'desc') {
+      sortField.value = null;
+      sortOrder.value = null;
+    }
+  } else {
+    sortField.value = field;
+    sortOrder.value = 'asc';
+  }
+};
+
+const sortedSongs = computed(() => {
+  const base = songs.value.slice();
+  if (!sortField.value || !sortOrder.value) return base;
+  const compareText = (a: string, b: string) =>
+    a.localeCompare(b, 'zh-Hans-CN', { sensitivity: 'base' });
+  const indexMap = new Map<string, number>();
+  songs.value.forEach((song, index) => {
+    indexMap.set(song.id, index);
+  });
+  const direction = sortOrder.value === 'asc' ? 1 : -1;
+
+  return base.sort((a, b) => {
+    switch (sortField.value) {
+      case 'title':
+        return compareText(a.title, b.title) * direction;
+      case 'album':
+        return compareText(a.album ?? '', b.album ?? '') * direction;
+      case 'duration':
+        return (a.duration - b.duration) * direction;
+      case 'index':
+        return ((indexMap.get(a.id) ?? 0) - (indexMap.get(b.id) ?? 0)) * direction;
+      default:
+        return 0;
+    }
+  });
+});
+
+const activeSongId = computed(() => playerStore.currentTrackId ?? undefined);
+const displaySongCount = computed(() => songs.value.length);
+
+const handleSongDoubleTapPlay = async (song: Song) => {
+  await replaceQueueAndPlay(playlistStore, playerStore, songs.value, 0, song, {
+    queueId: 'queue:daily-recommend',
+    title: '每日推荐',
+    subtitle: '为你量身定制',
+    type: 'daily-recommend',
+    dynamic: false,
+  });
+};
+
+const handlePlayAll = async () => {
+  if (songs.value.length === 0) return;
+  await replaceQueueAndPlay(playlistStore, playerStore, songs.value, 0, undefined, {
+    queueId: 'queue:daily-recommend',
+    title: '每日推荐',
+    subtitle: '为你量身定制',
+    type: 'daily-recommend',
+    dynamic: false,
+  });
+};
+
+const openBatchDrawer = () => {
+  if (songs.value.length === 0) return;
+  showBatchDrawer.value = true;
+};
+
+const handleLocate = () => songListRef.value?.scrollToActive?.();
+
+const fetchRecommendSongs = async () => {
+  loading.value = true;
+  try {
+    const res = await getEverydayRecommend();
+    songs.value = extractList(res).map((item) => mapTopSong(item));
+  } catch {
+    songs.value = [];
+  } finally {
+    loading.value = false;
+  }
+};
+
+onMounted(() => {
+  void fetchRecommendSongs();
+});
+</script>
+
+<template>
+  <div class="recommend-songs-view bg-bg-main min-h-full w-full min-w-0 overflow-hidden">
+
+    <!-- ═══ 横屏模式：使用 SliverHeader ═══ -->
+    <template v-if="!isPortrait">
+    <SliverHeader
+      typeLabel="RECOMMEND"
+      title="每日推荐"
+      :coverUrl="recommendCoverUrl"
+      :hasDetails="true"
+      :expandedHeight="176"
+      :collapsedHeight="56"
+    >
+      <template #details>
+        <div class="flex flex-col gap-2">
+          <div class="text-[13px] font-semibold text-text-secondary">为你量身定制的每日歌单</div>
+        </div>
+      </template>
+
+      <template #actions>
+        <ActionRow @play="handlePlayAll" @batch="openBatchDrawer" />
+      </template>
+
+      <template #collapsed-actions>
+        <Button
+          variant="unstyled"
+          size="none"
+          @click="handlePlayAll"
+          class="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-primary"
+        >
+          <Icon :icon="iconPlay" width="20" height="20" />
+        </Button>
+        <Button
+          variant="unstyled"
+          size="none"
+          @click="openBatchDrawer"
+          class="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-text-main opacity-60"
+        >
+          <Icon :icon="iconList" width="18" height="18" />
+        </Button>
+      </template>
+    </SliverHeader>
+
+    <BatchActionDrawer v-model:open="showBatchDrawer" :songs="songs" source-id="recommend" />
+
+    <div class="song-list-sticky sticky z-[110] bg-bg-main" :style="{ top: '56px' }">
+      <div class="px-4 md:px-10 border-b border-border-light/10">
+        <div class="flex items-center justify-between h-14">
+          <div class="text-[14px] font-semibold text-text-main relative whitespace-nowrap">
+            歌曲 <Badge :count="songs.length" />
+          </div>
+          <div class="flex items-center gap-2 flex-1 min-w-0 justify-end max-w-[50%]">
+            <div class="relative flex-1 min-w-0 hidden sm:block">
+              <input
+                v-model="searchQuery"
+                type="text"
+                placeholder="搜索歌曲..."
+                class="song-search-input w-full max-w-[208px] h-9 pl-8 pr-3 rounded-lg bg-white border border-black/30 shadow-sm text-text-main placeholder:text-text-main/50 dark:bg-white/[0.08] dark:border-white/10 dark:shadow-none outline-none text-[12px] transition-all float-right"
+              />
+              <Icon
+                class="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-main/60"
+                :icon="iconSearch"
+                width="14"
+                height="14"
+              />
+            </div>
+            <Button
+              variant="unstyled"
+              size="none"
+              @click="handleLocate"
+              class="song-locate-btn p-2 rounded-lg shrink-0"
+              title="定位当前播放"
+            >
+              <Icon :icon="iconCurrentLocation" width="16" height="16" />
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <SongListHeader
+        :sortField="sortField"
+        :sortOrder="sortOrder"
+        :showCover="true"
+        paddingClass="px-4 md:px-10"
+        @sort="handleSort"
+      />
+    </div>
+
+    <div class="px-4 md:px-10 pb-12">
+      <div v-if="loading" class="flex items-center justify-center py-20">
+        <div
+          class="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"
+        ></div>
+      </div>
+      <SongList
+        v-else
+        ref="songListRef"
+        :songs="sortedSongs"
+        :searchQuery="searchQuery"
+        :activeId="activeSongId"
+        :showCover="true"
+        :queueOptions="{
+          queueId: 'queue:daily-recommend',
+          title: '每日推荐',
+          subtitle: '为你量身定制',
+          type: 'daily-recommend',
+          dynamic: false,
+        }"
+        :enableDefaultDoubleTapPlay="true"
+        :onSongDoubleTapPlay="settingStore.replacePlaylist ? handleSongDoubleTapPlay : undefined"
+      />
+    </div>
+    </template>
+
+    <!-- ═══ 竖屏模式：紧凑布局 ═══ -->
+    <template v-else>
+      <BatchActionDrawer v-model:open="showBatchDrawer" :songs="songs" source-id="recommend" />
+
+      <!-- 头部详情（跟随滚动） -->
+      <div class="px-4 pt-3">
+        <div class="flex items-center gap-3">
+          <div class="w-14 h-14 rounded-[18px] gradient-primary-text flex items-center justify-center shrink-0 font-extrabold text-[18px] text-white shadow-sm">
+            {{ todayLabel }}
+          </div>
+          <div class="min-w-0 flex-1">
+            <div class="text-[16px] font-extrabold text-text-main">每日推荐</div>
+            <div class="flex items-center gap-3 mt-0.5 text-[11px] text-text-secondary/80">
+              <span class="inline-flex items-center gap-1">
+                <Icon :icon="iconPlay" width="11" height="11" />
+                {{ displaySongCount }} 首
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-1.5 mt-2.5">
+          <span class="px-2 py-0.5 rounded text-[10px] font-bold tracking-[0.8px] uppercase text-primary bg-primary/10 border border-primary/15">RECOMMEND</span>
+        </div>
+
+        <div class="mt-2.5">
+          <ActionRow @play="handlePlayAll" @batch="openBatchDrawer" />
+        </div>
+      </div>
+
+      <div class="song-list-sticky sticky z-[110] bg-bg-main" :style="{ top: '0px' }">
+        <div class="border-b border-border-light/10 px-4">
+          <div class="flex items-center justify-between h-10">
+            <div class="text-[13px] font-semibold text-text-main relative">
+              歌曲 <Badge :count="displaySongCount" class="scale-90 origin-left" />
+            </div>
+            <Button variant="unstyled" size="none" @click="handleLocate" class="song-locate-btn p-1.5 rounded-full text-text-main/60 hover:text-primary hover:bg-primary/10 transition-colors" title="定位当前播放">
+              <Icon :icon="iconCurrentLocation" width="16" height="16" />
+            </Button>
+          </div>
+        </div>
+
+        <SongListHeader :sortField="sortField" :sortOrder="sortOrder" :showCover="true" paddingClass="px-4" @sort="handleSort" />
+      </div>
+
+      <div class="pb-safe relative z-[1]">
+        <div v-if="loading" class="flex items-center justify-center py-20">
+          <div class="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+        </div>
+        <div v-else class="px-3">
+          <SongList
+            ref="songListRef"
+            :songs="sortedSongs"
+            :searchQuery="searchQuery"
+            :activeId="activeSongId"
+            :showCover="true"
+            :queueOptions="{ queueId: 'queue:daily-recommend', title: '每日推荐', subtitle: '为你量身定制', type: 'daily-recommend', dynamic: false }"
+            :enableDefaultDoubleTapPlay="true"
+            :onSongDoubleTapPlay="settingStore.replacePlaylist ? handleSongDoubleTapPlay : undefined"
+          />
+        </div>
+      </div>
+    </template>
+
+  </div>
+</template>
+
+<style scoped>
+@reference "@/style.css";
+
+.gradient-primary-text {
+  background: linear-gradient(135deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 60%, #000));
+}
+</style>

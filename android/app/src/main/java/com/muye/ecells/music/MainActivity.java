@@ -44,6 +44,7 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = "EchoMusic";
     private static final int REQUEST_NOTIFICATION_PERMISSION = 1001;
+    private static final int REQUEST_INSTALL_PERMISSION = 2002;
 
     private GeckoView geckoView;
     private GeckoSession session;
@@ -143,6 +144,7 @@ public class MainActivity extends AppCompatActivity {
             assetServer.startServer();
 
             AudioCacheManager.initialize(this);
+            ApkUpdateManager.initialize(this);
 
             setContentView(R.layout.activity_main);
             geckoView = findViewById(R.id.geckoView);
@@ -174,6 +176,8 @@ public class MainActivity extends AppCompatActivity {
             session.getSettings().setAllowJavascript(true);
 
             audioPlugin = new NativeAudioPlugin(this, session);
+            ApkUpdateManager.getInstance().setPlugin(audioPlugin);
+            ApkUpdateManager.getInstance().cleanupOldApks();
 
             session.setNavigationDelegate(new GeckoSession.NavigationDelegate() {
                 @Override
@@ -375,6 +379,9 @@ public class MainActivity extends AppCompatActivity {
         }
         if (audioPlugin != null) {
             audioPlugin.release();
+        }
+        if (ApkUpdateManager.getInstance() != null) {
+            ApkUpdateManager.getInstance().release();
         }
         stopService(new Intent(this, MediaNotificationService.class));
         stopService(new Intent(this, LyricOverlayService.class));

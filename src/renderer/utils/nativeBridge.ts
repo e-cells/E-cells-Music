@@ -142,3 +142,17 @@ export const NativeOrientationBridge = {
   setKeepScreenOn: (keepOn: boolean) =>
     nativeCall('setKeepScreenOn', { keepOn: String(keepOn) }),
 };
+
+export const NativeUpdateBridge = {
+  getDeviceAbiInfo: (): Promise<{ abis: string[]; primary: string; bestMatch: string }> =>
+    nativeCall('getDeviceAbiInfo'),
+  downloadApk: (options: { url: string; fileName: string }): Promise<{ started: boolean }> =>
+    nativeCall('downloadApk', options),
+  cancelApkDownload: () => nativeCall('cancelApkDownload'),
+  installApk: (options: { filePath: string }): Promise<{ installing: boolean }> =>
+    nativeCall('installApk', options),
+  checkInstallPermission: (): Promise<{ granted: boolean }> =>
+    nativeCall('checkInstallPermission'),
+  requestInstallPermission: () => nativeCall('requestInstallPermission'),
+  addListener,
+};

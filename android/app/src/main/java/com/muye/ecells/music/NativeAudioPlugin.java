@@ -240,6 +240,13 @@ public class NativeAudioPlugin {
                 case "setPlaybackState": return onSetPlaybackStateSync(params);
                 case "lyricSeekTo": return onLyricSeekToSync(params);
                 case "setKeepScreenOn": return onSetKeepScreenOnSync(params);
+                // APK update methods
+                case "getDeviceAbiInfo": return onGetDeviceAbiInfoSync();
+                case "downloadApk": return onDownloadApkSync(params);
+                case "cancelApkDownload": return onCancelApkDownloadSync();
+                case "installApk": return onInstallApkSync(params);
+                case "checkInstallPermission": return onCheckInstallPermissionSync();
+                case "requestInstallPermission": return onRequestInstallPermissionSync();
                 default:
                     return "{\"__nativeError\":\"Unknown method: " + method + "\"}";
             }
@@ -818,6 +825,63 @@ public class NativeAudioPlugin {
         return "{}";
     }
 
+    // ── APK update methods ──
+
+    private String onGetDeviceAbiInfoSync() {
+        ApkUpdateManager mgr = ApkUpdateManager.getInstance();
+        if (mgr == null) return "{\"__nativeError\":\"ApkUpdateManager not initialized\"}";
+        return mgr.getDeviceAbiInfo();
+    }
+
+    private String onDownloadApkSync(Map<String, String> params) {
+        ApkUpdateManager mgr = ApkUpdateManager.getInstance();
+        if (mgr == null) return "{\"__nativeError\":\"ApkUpdateManager not initialized\"}";
+        String url = params.get("url");
+        String fileName = params.get("fileName");
+        if (url == null || url.isEmpty() || fileName == null || fileName.isEmpty()) {
+            return "{\"__nativeError\":\"url and fileName are required\"}";
+        }
+        mgr.startDownloadApk(url, fileName);
+        return "{\"started\":true}";
+    }
+
+    private String onCancelApkDownloadSync() {
+        ApkUpdateManager mgr = ApkUpdateManager.getInstance();
+        if (mgr != null) mgr.cancelDownload();
+        return "{}";
+    }
+
+    private String onInstallApkSync(Map<String, String> params) {
+        ApkUpdateManager mgr = ApkUpdateManager.getInstance();
+        if (mgr == null) return "{\"__nativeError\":\"ApkUpdateManager not initialized\"}";
+        String filePath = params.get("filePath");
+        if (filePath == null || filePath.isEmpty()) {
+            return "{\"__nativeError\":\"filePath is required\"}";
+        }
+        String error = mgr.installApk(filePath);
+        if (error != null) {
+            return "{\"__nativeError\":\"" + error.replace("\"", "'") + "\"}";
+        }
+        return "{\"installing\":true}";
+    }
+
+    private String onCheckInstallPermissionSync() {
+        ApkUpdateManager mgr = ApkUpdateManager.getInstance();
+        if (mgr == null) return "{\"granted\":false}";
+        return "{\"granted\":" + mgr.canInstallApk() + "}";
+    }
+
+    private String onRequestInstallPermissionSync() {
+        ApkUpdateManager mgr = ApkUpdateManager.getInstance();
+        if (mgr == null) return "{}";
+        Intent intent = mgr.buildInstallPermissionIntent();
+        if (intent != null) {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            activity.startActivity(intent);
+        }
+        return "{}";
+    }
+
     // -- Method implementations --
 
     private void onLoadAudio(Map<String, String> params, String callbackId) {
@@ -1095,7 +1159,7 @@ public class NativeAudioPlugin {
         });
     }
 
-    private void emitEvent(String eventName, String jsonPayload) {
+    void emitEvent(String eventName, String jsonPayload) {
         runOnUi(() -> {
             activity.evalJs(
                 "if(window.NativeBridge&&window.NativeBridge._listeners['" + eventName + "']){" +

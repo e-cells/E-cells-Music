@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted } from 'vue';
+import { computed, ref, onMounted, onUnmounted, watch } from 'vue';
 import { useSettingStore, type PortraitCoverStyle, type VoiceSearchMode } from '@/stores/setting';
 import { usePlayerStore } from '@/stores/player';
 import { useThemeStore, type AccentMode } from '@/stores/theme';
@@ -7,7 +7,7 @@ import { ACCENT_PRESETS } from '@/utils/color';
 import { useLyricColorPicker } from '@/utils/useLyricColorPicker';
 import { useLyricStore } from '@/stores/lyric';
 import { useToastStore } from '@/stores/toast';
-import { isGeckoView, NativeLyricBridge, NativeAudioBridge } from '@/utils/nativeBridge';
+import { isGeckoView, NativeLyricBridge, NativeAudioBridge, NativeUpdateBridge } from '@/utils/nativeBridge';
 import { useDesktopLyricStore } from '@/desktopLyric/store';
 import type { AudioQualityValue } from '@/types';
 import type { ThemeMode } from '../../shared/app';
@@ -403,8 +403,19 @@ const showUpdateDialog = ref(false);
 const latestVersionInfo = ref({
   version: '',
   releaseNotes: '',
-  url: ''
+  url: '',
+  apkDownloadUrl: '',
+  apkFileName: '',
 });
+
+// Android in-app update state
+const updateDownloadPercent = ref(0);
+const updateDownloadStatus = ref<'idle' | 'downloading' | 'downloaded' | 'error'>('idle');
+const updateDownloadError = ref('');
+const downloadedApkPath = ref('');
+let updateProgressListener: { remove: () => void } | null = null;
+let updateCompleteListener: { remove: () => void } | null = null;
+let updateErrorListener: { remove: () => void } | null = null;
 
 // 计算当前APP版本：优先使用主进程注入的 appVersion，降级使用 package.json 的 version
 const currentAppVersion = computed(() => settingStore.appVersion || pkg.version || '1.0.0');
@@ -439,8 +450,8 @@ const webviewEngineInfo = computed(() => {
 
 // 版本对比工具函数
 const compareVersions = (v1: string, v2: string) => {
-  const p1 = v1.replace(/^v/, '').split('.').map(Number);
-  const p2 = v2.replace(/^v/, '').split('.').map(Number);
+  const p1 = v1.replace(/^v/i, '').split('.').map(Number);
+  const p2 = v2.replace(/^v/i, '').split('.').map(Number);
   for (let i = 0; i < Math.max(p1.length, p2.length); i++) {
     const n1 = p1[i] || 0;
     const n2 = p2[i] || 0;
@@ -461,10 +472,32 @@ const checkForUpdates = async () => {
 
     const latestTag = data.tag_name;
     if (compareVersions(latestTag, currentAppVersion.value) > 0) {
+      let apkDownloadUrl = '';
+      let apkFileName = '';
+
+      // Auto-detect ABI and match APK for Android
+      if (isGeckoView && data.assets && data.assets.length > 0) {
+        try {
+          const abiInfo = await NativeUpdateBridge.getDeviceAbiInfo();
+          const bestAbi = abiInfo.bestMatch;
+          const matchedAsset = data.assets.find((a: any) =>
+            a.name && a.name.includes(`-${bestAbi}-`) && a.name.endsWith('.apk')
+          );
+          if (matchedAsset) {
+            apkDownloadUrl = matchedAsset.browser_download_url;
+            apkFileName = matchedAsset.name;
+          }
+        } catch (e) {
+          console.warn('Failed to detect ABI for update:', e);
+        }
+      }
+
       latestVersionInfo.value = {
         version: latestTag,
         releaseNotes: data.body || '暂无更新说明',
-        url: data.html_url
+        url: data.html_url,
+        apkDownloadUrl,
+        apkFileName,
       };
       showUpdateDialog.value = true;
     } else {
@@ -482,6 +515,91 @@ const goToReleasePage = () => {
   handleOpenExternalUrl(latestVersionInfo.value.url);
   showUpdateDialog.value = false;
 };
+
+const cleanupUpdateListeners = () => {
+  updateProgressListener?.remove();
+  updateCompleteListener?.remove();
+  updateErrorListener?.remove();
+  updateProgressListener = null;
+  updateCompleteListener = null;
+  updateErrorListener = null;
+};
+
+const handleUpdateDownload = async () => {
+  if (!latestVersionInfo.value.apkDownloadUrl) {
+    goToReleasePage();
+    return;
+  }
+
+  // Check install permission
+  try {
+    const perm = await NativeUpdateBridge.checkInstallPermission();
+    if (!perm.granted) {
+      await NativeUpdateBridge.requestInstallPermission();
+      toastStore.warning('请在系统设置中允许安装未知来源应用');
+      return;
+    }
+  } catch {}
+
+  cleanupUpdateListeners();
+
+  updateProgressListener = NativeUpdateBridge.addListener(
+    'updateDownloadProgress',
+    (data: any) => {
+      updateDownloadStatus.value = 'downloading';
+      updateDownloadPercent.value = Math.round((data.percent || 0) * 100);
+    }
+  );
+  updateCompleteListener = NativeUpdateBridge.addListener(
+    'updateDownloadComplete',
+    (data: any) => {
+      updateDownloadStatus.value = 'downloaded';
+      downloadedApkPath.value = data.filePath || '';
+      cleanupUpdateListeners();
+    }
+  );
+  updateErrorListener = NativeUpdateBridge.addListener(
+    'updateDownloadError',
+    (data: any) => {
+      updateDownloadStatus.value = 'error';
+      updateDownloadError.value = data.error || '下载失败';
+      cleanupUpdateListeners();
+    }
+  );
+
+  updateDownloadStatus.value = 'downloading';
+  updateDownloadPercent.value = 0;
+
+  try {
+    await NativeUpdateBridge.downloadApk({
+      url: latestVersionInfo.value.apkDownloadUrl,
+      fileName: latestVersionInfo.value.apkFileName,
+    });
+  } catch (e: any) {
+    updateDownloadStatus.value = 'error';
+    updateDownloadError.value = e.message || '下载失败';
+    cleanupUpdateListeners();
+  }
+};
+
+const handleUpdateInstall = async () => {
+  if (!downloadedApkPath.value) return;
+  try {
+    await NativeUpdateBridge.installApk({ filePath: downloadedApkPath.value });
+  } catch (e: any) {
+    toastStore.warning('安装失败: ' + (e.message || '未知错误'));
+  }
+};
+
+watch(showUpdateDialog, (open) => {
+  if (!open) {
+    updateDownloadStatus.value = 'idle';
+    updateDownloadPercent.value = 0;
+    updateDownloadError.value = '';
+    downloadedApkPath.value = '';
+    cleanupUpdateListeners();
+  }
+});
 // ── 新增结束 ──
 
 const audioQualityOptions = [
@@ -1175,10 +1293,35 @@ const handleShowChangelog = async () => {
         <div class="text-[13px] text-text-secondary bg-black/5 dark:bg-white/5 p-3 rounded-lg max-h-[200px] overflow-y-auto whitespace-pre-wrap">
           {{ latestVersionInfo.releaseNotes }}
         </div>
+        <div v-if="isGeckoView && latestVersionInfo.apkDownloadUrl && updateDownloadStatus !== 'idle'" class="space-y-2">
+          <div v-if="updateDownloadStatus === 'downloading'" class="flex items-center gap-2">
+            <span class="text-xs text-text-secondary shrink-0">{{ updateDownloadPercent }}%</span>
+            <div class="flex-1 h-1.5 rounded-full bg-black/5 dark:bg-white/10 overflow-hidden">
+              <div class="h-full rounded-full bg-primary transition-all duration-300"
+                   :style="{ width: `${updateDownloadPercent}%` }"></div>
+            </div>
+          </div>
+          <p v-else-if="updateDownloadStatus === 'error'" class="text-xs text-red-500">
+            下载失败：{{ updateDownloadError }}
+          </p>
+          <p v-else-if="updateDownloadStatus === 'downloaded'" class="text-xs text-green-500">
+            下载完成，点击「立即安装」安装新版本
+          </p>
+        </div>
       </div>
       <template #footer>
         <Button class="settings-button" variant="outline" size="sm" @click="showUpdateDialog = false">稍后更新</Button>
-        <Button class="settings-button" style="background-color: var(--color-primary); color: #fff;" size="sm" @click="goToReleasePage">前往下载</Button>
+        <Button v-if="isGeckoView && latestVersionInfo.apkDownloadUrl && updateDownloadStatus === 'downloaded'"
+                class="settings-button" style="background-color: var(--color-primary); color: #fff;"
+                size="sm" @click="handleUpdateInstall">立即安装</Button>
+        <Button v-else-if="isGeckoView && latestVersionInfo.apkDownloadUrl && updateDownloadStatus === 'downloading'"
+                class="settings-button" variant="secondary" size="sm" disabled>下载中...</Button>
+        <Button v-else-if="isGeckoView && latestVersionInfo.apkDownloadUrl"
+                class="settings-button" style="background-color: var(--color-primary); color: #fff;"
+                size="sm" @click="handleUpdateDownload">立即更新</Button>
+        <Button v-else
+                class="settings-button" style="background-color: var(--color-primary); color: #fff;"
+                size="sm" @click="goToReleasePage">前往下载</Button>
       </template>
     </Dialog>
 

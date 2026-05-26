@@ -5,6 +5,7 @@ import android.content.res.AssetManager;
 import android.util.Log;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Map;
@@ -19,6 +20,7 @@ public class AssetServer extends NanoHTTPD {
     private static final int PORT = 18387;
 
     private final AssetManager assetManager;
+    private byte[] cachedIndexHtml;
 
     private static final Map<String, String> MIME_TYPES = new HashMap<>();
     static {
@@ -71,21 +73,37 @@ public class AssetServer extends NanoHTTPD {
         String assetPath = ASSET_PREFIX + uri;
 
         try {
-            InputStream is = assetManager.open(assetPath);
-            byte[] bytes = readAll(is);
-            is.close();
+            byte[] bytes;
+            boolean isHtml = uri.equals("index.html");
 
-            if (uri.equals("index.html") || uri.isEmpty()) {
-                bytes = injectGeckoViewInit(bytes);
+            if (isHtml && cachedIndexHtml != null) {
+                bytes = cachedIndexHtml;
+            } else {
+                InputStream is = assetManager.open(assetPath);
+                bytes = readAll(is);
+                is.close();
+
+                if (isHtml) {
+                    bytes = injectGeckoViewInit(bytes);
+                    cachedIndexHtml = bytes;
+                }
             }
 
             String ext = getExtension(uri);
             String mime = MIME_TYPES.getOrDefault(ext, "application/octet-stream");
 
-            return newFixedLengthResponse(Response.Status.OK, mime, new ByteArrayInputStream(bytes), bytes.length);
+            Response response = newFixedLengthResponse(Response.Status.OK, mime, new ByteArrayInputStream(bytes), bytes.length);
+
+            // Cache headers: static assets cache 24h, HTML no-cache (has injected script)
+            if (isHtml) {
+                response.addHeader("Cache-Control", "no-cache");
+            } else {
+                response.addHeader("Cache-Control", "public, max-age=86400");
+            }
+
+            return response;
 
         } catch (IOException e) {
-            // Not found
             return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "Not found: " + uri);
         }
     }
@@ -114,17 +132,12 @@ public class AssetServer extends NanoHTTPD {
     }
 
     private byte[] readAll(InputStream is) throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
         byte[] buffer = new byte[8192];
-        int total = 0;
-        byte[] result = new byte[0];
         int read;
         while ((read = is.read(buffer)) != -1) {
-            byte[] newResult = new byte[total + read];
-            System.arraycopy(result, 0, newResult, 0, total);
-            System.arraycopy(buffer, 0, newResult, total, read);
-            result = newResult;
-            total += read;
+            baos.write(buffer, 0, read);
         }
-        return result;
+        return baos.toByteArray();
     }
 }

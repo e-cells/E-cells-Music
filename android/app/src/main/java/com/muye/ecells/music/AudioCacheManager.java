@@ -42,6 +42,7 @@ public class AudioCacheManager {
     private final Map<String, CacheEntry> index = new HashMap<>();
     private final Map<String, Future<?>> activeDownloads = new ConcurrentHashMap<>();
     private final ExecutorService downloadExecutor = Executors.newFixedThreadPool(2);
+    private final ExecutorService preloadExecutor = Executors.newFixedThreadPool(1);
 
     public interface DownloadProgressCallback {
         void onProgress(String cacheKey, float percent);
@@ -138,6 +139,27 @@ public class AudioCacheManager {
             }
         });
         activeDownloads.put(cacheKey, future);
+    }
+
+    /**
+     * Pre-load a song into cache on a low-priority thread.
+     * Used to pre-cache the next song in the playlist.
+     */
+    public void preloadCache(String cacheKey, String url) {
+        if (cacheKey == null || url == null || url.isEmpty()) return;
+        synchronized (this) {
+            CacheEntry existing = index.get(cacheKey);
+            if (existing != null && existing.complete) return;
+            if (activeDownloads.containsKey(cacheKey)) return;
+        }
+        preloadExecutor.submit(() -> {
+            try {
+                downloadToFile(cacheKey, url, null);
+                Log.i(TAG, "Preload complete: " + cacheKey);
+            } catch (Exception e) {
+                Log.d(TAG, "Preload skipped: " + cacheKey + " - " + e.getMessage());
+            }
+        });
     }
 
     private void downloadToFile(String cacheKey, String urlStr, DownloadProgressCallback callback) throws Exception {

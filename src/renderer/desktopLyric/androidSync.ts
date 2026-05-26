@@ -133,9 +133,13 @@ export const initAndroidLyricSync = async () => {
     }
   });
 
-  // Poll native lock state every 2s (overlay lock icon changes aren't reliably pushed via events)
-  const lockPollTimer = window.setInterval(async () => {
-    if (!desktopLyricStore.settings.enabled) return;
+  // Poll native lock state via setTimeout chain (5s interval, avoids timer pile-up)
+  let lockPollTimer: ReturnType<typeof setTimeout> | null = null;
+  const pollLockState = async () => {
+    if (!desktopLyricStore.settings.enabled) {
+      lockPollTimer = window.setTimeout(pollLockState, 5000);
+      return;
+    }
     try {
       const ns = (await NativeLyricBridge.getLyricSettings()) as any;
       if (ns && typeof ns.locked === 'boolean') {
@@ -144,7 +148,9 @@ export const initAndroidLyricSync = async () => {
         }
       }
     } catch {}
-  }, 2000);
+    lockPollTimer = window.setTimeout(pollLockState, 5000);
+  };
+  lockPollTimer = window.setTimeout(pollLockState, 2000);
 
   // Toggle on/off
   stops.push(
@@ -257,7 +263,7 @@ export const initAndroidLyricSync = async () => {
 
   return () => {
     resumeListener.remove();
-    clearInterval(lockPollTimer);
+    if (lockPollTimer) clearTimeout(lockPollTimer);
     darkObserver.disconnect();
     stops.forEach((stop) => stop());
   };

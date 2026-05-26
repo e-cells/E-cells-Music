@@ -11,6 +11,7 @@ import { isGeckoView } from '@/utils/nativeBridge';
 
 export type ScreenOrientation = 'auto' | 'landscape' | 'portrait';
 export type PortraitCoverStyle = 'square' | 'disc' | 'breathing';
+export type VoiceSearchMode = 'all' | 'first';
 
 export const DEFAULT_SHORTCUT_LABELS: Record<string, string> = {
   togglePlayback: '⌘Space',
@@ -48,7 +49,7 @@ export const useSettingStore = defineStore('setting', {
     rememberWindowSize: true,
     showPlaylistCount: true,
     closeBehavior: 'tray' as CloseBehavior,
-    replacePlaylist: false,
+    replacePlaylist: true,
     volumeFade: true,
     volumeFadeTime: 1000,
     lyricArtistBackdrop: true,
@@ -102,9 +103,10 @@ export const useSettingStore = defineStore('setting', {
     // 显示系统状态栏
     showStatusBar: true,
     // 竖屏播放封面样式
-    portraitCoverStyle: 'disc' as PortraitCoverStyle,
+    portraitCoverStyle: 'square' as PortraitCoverStyle,
     // 缓存设置（Android）
     cacheSizeLimitMb: 500,
+    voiceSearchMode: 'all' as VoiceSearchMode,
   }),
   actions: {
     setTheme(theme: ThemeMode) {

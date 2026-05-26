@@ -1,11 +1,9 @@
 # 易格音乐 (E-cells-Music for Android) ── 高颜值的酷狗概念版第三方安卓音乐播放器
 
 ## 📖 项目简介
-本项目是站在大佬[hoowhoami](https://github.com/hoowhoami)的肩膀上——基于开源项目 **[EchoMusic](https://github.com/hoowhoami/EchoMusic)** 的前端代码，经过跨平台二次开发、原生层重构并打包打造而成的 Android 客户端。
+本项目是基于开源项目 **[EchoMusic](https://github.com/hoowhoami/EchoMusic)** 的前端代码，经过跨平台二次开发、原生层重构并打包打造而成的 Android 客户端。
 
 应用基于 **Vue 3 + Vite + TailwindCSS** 前端，结合 **GeckoView** (Mozilla Firefox 引擎) 作为 WebView，通过窗口 `prompt` 桥接实现 JavaScript ↔ Java 原生通信。其横屏界面专为安卓车机和平板等大屏设备设计，若在普通安卓手机上使用，只需在设置里切换成竖屏模式即可完美适配！
-
-💡 **特别鸣谢**：致敬原作者 [hoowhoami/EchoMusic](https://github.com/hoowhoami/EchoMusic) 提供的极简美学设计。
 
 ---
 

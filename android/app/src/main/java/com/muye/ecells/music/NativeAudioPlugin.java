@@ -234,6 +234,7 @@ public class NativeAudioPlugin {
                 case "getCacheInfo": return onGetCacheInfoSync();
                 case "clearCache": return onClearCacheSync();
                 case "setCacheSizeLimit": return onSetCacheSizeLimitSync(params);
+                case "preloadCache": return onPreloadCacheSync(params);
                 // Native lyric engine methods
                 case "loadLyrics": return onLoadLyricsSync(params);
                 case "setPlaybackState": return onSetPlaybackStateSync(params);
@@ -726,6 +727,19 @@ public class NativeAudioPlugin {
         }
     }
 
+    private String onPreloadCacheSync(Map<String, String> params) {
+        String url = params.get("url");
+        String hash = params.get("hash");
+        String quality = params.get("quality");
+        if (url == null || hash == null) return "{}";
+        try {
+            AudioCacheManager cm = AudioCacheManager.getInstance();
+            String cacheKey = cm.buildCacheKey(hash, quality);
+            if (cacheKey != null) cm.preloadCache(cacheKey, url);
+        } catch (Exception ignored) {}
+        return "{}";
+    }
+
     private String onCheckBatteryOptimizationSync() {
         boolean ignoring = false;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -1042,7 +1056,7 @@ public class NativeAudioPlugin {
                     double time = mediaPlayer.getCurrentPosition() / 1000.0;
                     emitEvent("timeUpdate", "{\"currentTime\":" + time + "}");
                 }
-                handler.postDelayed(this, 250);
+                handler.postDelayed(this, 500);
             }
         };
         handler.post(timeUpdateRunnable);

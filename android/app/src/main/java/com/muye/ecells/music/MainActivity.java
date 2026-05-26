@@ -32,6 +32,7 @@ import androidx.core.content.ContextCompat;
 import org.mozilla.geckoview.GeckoView;
 import org.mozilla.geckoview.GeckoSession;
 import org.mozilla.geckoview.GeckoRuntime;
+import org.mozilla.geckoview.GeckoRuntimeSettings;
 import org.mozilla.geckoview.GeckoSessionSettings;
 import org.mozilla.geckoview.AllowOrDeny;
 import org.mozilla.geckoview.GeckoResult;
@@ -155,7 +156,16 @@ public class MainActivity extends AppCompatActivity {
             });
 
             if (runtime == null) {
-                runtime = GeckoRuntime.create(this);
+                org.mozilla.geckoview.ContentBlocking.Settings cbSettings =
+                    new org.mozilla.geckoview.ContentBlocking.Settings.Builder()
+                        .antiTracking(org.mozilla.geckoview.ContentBlocking.AntiTracking.STRICT)
+                        .strictSocialTrackingProtection(true)
+                        .build();
+                runtime = GeckoRuntime.create(this,
+                    new GeckoRuntimeSettings.Builder()
+                        .contentBlocking(cbSettings)
+                        .build()
+                );
             }
 
             session = new GeckoSession();

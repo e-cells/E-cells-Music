@@ -226,9 +226,10 @@ export const usePlayerStore = defineStore(
       void deviceManager.refreshOutputDevices();
 
       let lastMediaSessionSync = 0;
-      const MEDIA_SESSION_SYNC_MS = 2000;
+      const MEDIA_SESSION_SYNC_MS = 5000;
+      let lastSyncedPosition = -1;
       let lastHistoryCheck = 0;
-      const HISTORY_CHECK_MS = 5000;
+      const HISTORY_CHECK_MS = 10000;
 
       // ── Stall detection ──
       let lastTimeUpdateAt = 0;
@@ -271,6 +272,8 @@ export const usePlayerStore = defineStore(
           state.seekTargetTime = null;
           state.currentTime = currentTime;
           lastTimeUpdateAt = Date.now();
+          // Skip expensive bridge calls when app is in background (screen off / tab hidden)
+          if (document.hidden) return;
           const now = Date.now();
           if (now - lastHistoryCheck >= HISTORY_CHECK_MS) {
             state.lastPlayTime = currentTime;
@@ -278,8 +281,12 @@ export const usePlayerStore = defineStore(
             void historyManager.commitListeningHistory();
           }
           if (now - lastMediaSessionSync >= MEDIA_SESSION_SYNC_MS) {
-            lastMediaSessionSync = now;
-            engine.updateMediaPlaybackState(buildMediaState(state));
+            const posDelta = Math.abs(state.currentTime - lastSyncedPosition);
+            if (posDelta >= 1.0 || lastSyncedPosition < 0) {
+              lastMediaSessionSync = now;
+              lastSyncedPosition = state.currentTime;
+              engine.updateMediaPlaybackState(buildMediaState(state));
+            }
           }
         },
         durationChange: (duration) => {
@@ -463,24 +470,35 @@ export const usePlayerStore = defineStore(
           }
 
           // 2. 如果不是控制指令，则执行正常的搜索播放逻辑
-          const res = await apiSearch(query, 'song', 1, 100); 
+          const res = await apiSearch(query, 'song', 1, 100);
           const data = (res as any)?.data;
           const lists = data?.lists ?? data?.list ?? [];
           if (Array.isArray(lists) && lists.length > 0) {
             const songList: Song[] = lists.map((s: unknown) => mapSearchSong(s));
-            
-            const playlistStore = usePlaylistStore();
-            playlistStore.setPlaybackQueueWithOptions(songList, 0, {
-              queueId: `search-${Date.now()}`, 
-              title: `语音搜索: ${query}`,      
-              type: 'search',
-              activate: true,                  
-            });
 
-            await playbackManager.playTrack(String(songList[0].id), songList, { 
-              autoPlay: true,
-              sourceQueueId: playlistStore.activeQueueId 
-            });
+            const playlistStore = usePlaylistStore();
+
+            if (settingStore.voiceSearchMode === 'first') {
+              // 仅播首曲：只播放第一首歌，不替换当前队列，播完后继续原来的播放列表
+              const currentQueueSongs = playlistStore.activeQueue?.songs ?? playlistStore.defaultList;
+              await playbackManager.playTrack(String(songList[0].id), currentQueueSongs, {
+                autoPlay: true,
+                sourceQueueId: playlistStore.activeQueueId,
+              });
+            } else {
+              // 全部结果：将搜索结果全部加载到播放队列
+              playlistStore.setPlaybackQueueWithOptions(songList, 0, {
+                queueId: `search-${Date.now()}`,
+                title: `语音搜索: ${query}`,
+                type: 'search',
+                activate: true,
+              });
+
+              await playbackManager.playTrack(String(songList[0].id), songList, {
+                autoPlay: true,
+                sourceQueueId: playlistStore.activeQueueId,
+              });
+            }
           }
         } catch (e) {
           logger.error('Voice search play failed', e);

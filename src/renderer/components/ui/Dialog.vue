@@ -176,7 +176,6 @@ const handleInteractOutside = (event: Event) => {
   transition:
     opacity 0.18s ease-out,
     transform 0.18s ease-out;
-  will-change: transform, opacity;
 }
 
 :global(.dialog-content[data-state='open']) {

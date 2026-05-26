@@ -125,6 +125,10 @@ public class LyricOverlayService extends Service {
     private int currentLineIndex = -1;
     private Runnable lyricTimerRunnable;
 
+    // Screen on/off state
+    private BroadcastReceiver screenReceiver;
+    private boolean isScreenOn = true;
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -177,6 +181,31 @@ public class LyricOverlayService extends Service {
         lastDetectedNightMode = getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
         startThemePolling();
 
+        // Register screen on/off receiver to pause/resume timers when screen is off
+        screenReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) {
+                    isScreenOn = false;
+                    stopNativeLyricTimer();
+                    stopThemePolling();
+                    Log.i(TAG, "Screen off: paused lyric timer and theme polling");
+                } else if (Intent.ACTION_SCREEN_ON.equals(intent.getAction())) {
+                    isScreenOn = true;
+                    // Recalculate baseSystemMs to account for elapsed time while screen was off
+                    if (isPlaying) {
+                        startNativeLyricTimer();
+                    }
+                    startThemePolling();
+                    Log.i(TAG, "Screen on: resumed lyric timer and theme polling");
+                }
+            }
+        };
+        IntentFilter screenFilter = new IntentFilter();
+        screenFilter.addAction(Intent.ACTION_SCREEN_OFF);
+        screenFilter.addAction(Intent.ACTION_SCREEN_ON);
+        registerReceiver(screenReceiver, screenFilter);
+
         Log.i(TAG, "LyricOverlayService created");
     }
 
@@ -203,6 +232,14 @@ public class LyricOverlayService extends Service {
                 Log.w(TAG, "Error unregistering configChangeReceiver", e);
             }
             configChangeReceiver = null;
+        }
+        if (screenReceiver != null) {
+            try {
+                unregisterReceiver(screenReceiver);
+            } catch (Exception e) {
+                Log.w(TAG, "Error unregistering screenReceiver", e);
+            }
+            screenReceiver = null;
         }
         instance = null;
         super.onDestroy();
@@ -405,10 +442,33 @@ public class LyricOverlayService extends Service {
                         updateOverlayFromLyrics();
                     }
                 }
-                handler.postDelayed(this, 200);
+                if (isPlaying) {
+                    handler.postDelayed(this, computeLyricPollDelay());
+                }
             }
         };
         handler.post(lyricTimerRunnable);
+    }
+
+    /**
+     * Compute adaptive polling delay based on time until next lyric line.
+     * Long gaps between lines → longer delay (saves battery).
+     * Approaching a line change → shorter delay (accuracy).
+     */
+    private long computeLyricPollDelay() {
+        int nextIdx = currentLineIndex + 1;
+        if (nextIdx >= lyrics.size()) {
+            return 2000; // Last line, no more changes expected
+        }
+        long pos = getCurrentPlaybackPosition();
+        long timeUntilNext = lyrics.get(nextIdx).timeMs - pos;
+        if (timeUntilNext > 2000) {
+            return 1000;
+        } else if (timeUntilNext > 500) {
+            return 200;
+        } else {
+            return 100;
+        }
     }
 
     private void stopNativeLyricTimer() {
@@ -455,6 +515,7 @@ public class LyricOverlayService extends Service {
         final boolean themeChanged = (newThemeMode != null
             && (newThemeMode.equals("light") || newThemeMode.equals("dark") || newThemeMode.equals("system"))
             && !newThemeMode.equals(themeMode));
+        final String oldThemeMode = themeMode;
         if (themeChanged) {
             themeMode = newThemeMode;
             prefs.edit().putString("theme_mode", themeMode).apply();
@@ -491,6 +552,14 @@ public class LyricOverlayService extends Service {
         handler.post(() -> {
             if (line1 == null || overlayView == null) return;
             applyColorToViews();
+            // Start or stop theme polling when mode changes between "system" and others
+            if (themeChanged) {
+                if ("system".equals(themeMode)) {
+                    startThemePolling();
+                } else if ("system".equals(oldThemeMode)) {
+                    stopThemePolling();
+                }
+            }
             line1.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize);
             line2.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize);
             line2.setVisibility(doubleLine ? View.VISIBLE : View.GONE);
@@ -606,9 +675,18 @@ public class LyricOverlayService extends Service {
     public void setThemeMode(String mode) {
         if (mode == null || (!mode.equals("light") && !mode.equals("dark") && !mode.equals("system"))) return;
         if (mode.equals(themeMode)) return;
+        String oldMode = themeMode;
         themeMode = mode;
         prefs.edit().putString("theme_mode", themeMode).apply();
-        handler.post(this::applyColorToViews);
+        handler.post(() -> {
+            applyColorToViews();
+            // Start or stop polling based on mode change
+            if ("system".equals(mode) && !"system".equals(oldMode)) {
+                startThemePolling();
+            } else if (!"system".equals(mode) && "system".equals(oldMode)) {
+                stopThemePolling();
+            }
+        });
     }
 
     private void applyColorToViews() {
@@ -633,12 +711,17 @@ public class LyricOverlayService extends Service {
         line2.setTextColor(color);
     }
 
+    /**
+     * Start theme polling only when themeMode is "system" and screen is on.
+     * Called when theme mode changes to "system" or screen turns on.
+     */
     private void startThemePolling() {
         stopThemePolling();
+        if (!"system".equals(themeMode) || !isScreenOn) return;
         themePollRunnable = new Runnable() {
             @Override
             public void run() {
-                if ("system".equals(themeMode) && isVisible) {
+                if ("system".equals(themeMode) && isVisible && isScreenOn) {
                     int currentNightMode = getResources().getConfiguration().uiMode
                         & Configuration.UI_MODE_NIGHT_MASK;
                     if (lastDetectedNightMode >= 0 && currentNightMode != lastDetectedNightMode) {
@@ -647,10 +730,13 @@ public class LyricOverlayService extends Service {
                     }
                     lastDetectedNightMode = currentNightMode;
                 }
-                handler.postDelayed(this, 10000);
+                // Stop self if conditions no longer met, otherwise continue
+                if ("system".equals(themeMode) && isScreenOn) {
+                    handler.postDelayed(this, 30000);
+                }
             }
         };
-        handler.postDelayed(themePollRunnable, 10000);
+        handler.postDelayed(themePollRunnable, 30000);
     }
 
     private void stopThemePolling() {

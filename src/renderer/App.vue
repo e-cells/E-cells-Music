@@ -160,14 +160,12 @@ document.addEventListener('visibilitychange', handleVisibilityChange);
   transition:
     transform 0.35s cubic-bezier(0.16, 1, 0.3, 1),
     opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-  will-change: transform, opacity;
 }
 
 .lyric-overlay-leave-active {
   transition:
     transform 0.3s cubic-bezier(0.4, 0, 0.6, 1),
     opacity 0.2s cubic-bezier(0.4, 0, 1, 1);
-  will-change: transform, opacity;
 }
 
 .lyric-overlay-enter-from {

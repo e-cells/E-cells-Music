@@ -525,3 +525,14 @@ html.document-hidden *::before,
 html.document-hidden *::after {
   animation-play-state: paused !important;
 }
+
+/* 无障碍：用户开启"减少动画"时禁用所有动画，节省电池 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

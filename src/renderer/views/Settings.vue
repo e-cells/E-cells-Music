@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onUnmounted } from 'vue';
-import { useSettingStore, type PortraitCoverStyle } from '@/stores/setting';
+import { useSettingStore, type PortraitCoverStyle, type VoiceSearchMode } from '@/stores/setting';
 import { usePlayerStore } from '@/stores/player';
 import { useThemeStore, type AccentMode } from '@/stores/theme';
 import { ACCENT_PRESETS } from '@/utils/color';
@@ -53,7 +53,7 @@ const androidLyricEnabled = ref(false);
 const androidLyricFontSize = ref(18);
 const androidLyricLightColorIndex = ref(0);
 const androidLyricDarkColorIndex = ref(0);
-const androidLyricDoubleLine = ref(true);
+const androidLyricDoubleLine = ref(false);
 const androidLyricWidthPercent = ref(100);
 const androidLyricStrokeEnabled = ref(false);
 const androidLyricAlignment = ref('center');
@@ -416,6 +416,27 @@ const aboutVersionText = computed(() => {
   return `Version v${currentAppVersion.value} ${settingStore.isPrerelease ? '测试版' : '正式版'}`;
 });
 
+const webviewEngineInfo = computed(() => {
+  const ua = navigator.userAgent;
+  if (/Gecko\//.test(ua) && !/Firefox\//.test(ua)) {
+    const match = ua.match(/Gecko\/([\d.]+)/);
+    return match ? `GeckoView ${match[1]}` : 'GeckoView';
+  }
+  if (/AppleWebKit\//.test(ua) && /Chrome\//.test(ua)) {
+    const match = ua.match(/Chrome\/([\d.]+)/);
+    return match ? `Blink ${match[1]}` : 'Blink';
+  }
+  if (/Gecko\//.test(ua) && /Firefox\//.test(ua)) {
+    const match = ua.match(/Firefox\/([\d.]+)/);
+    return match ? `Gecko ${match[1]}` : 'Gecko';
+  }
+  if (/AppleWebKit\//.test(ua)) {
+    const match = ua.match(/Version\/([\d.]+)/);
+    return match ? `WebKit ${match[1]}` : 'WebKit';
+  }
+  return '未知';
+});
+
 // 版本对比工具函数
 const compareVersions = (v1: string, v2: string) => {
   const p1 = v1.replace(/^v/, '').split('.').map(Number);
@@ -488,6 +509,11 @@ const portraitCoverStyleOptions = [
   { label: '经典方形', value: 'square' },
   { label: '光盘旋转', value: 'disc' },
   { label: '呼吸脉动', value: 'breathing' },
+];
+
+const voiceSearchModeOptions = [
+  { label: '全部结果', value: 'all' },
+  { label: '仅播首曲', value: 'first' },
 ];
 
 const handleOpenExternalUrl = async (url: string) => {
@@ -693,6 +719,19 @@ const handleShowChangelog = async () => {
           </div>
           <Switch v-model="settingStore.replacePlaylist" />
         </div>
+        <div class="settings-divider"></div>
+        <div class="settings-item">
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">语音搜歌</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">选择语音搜索歌曲后的播放方式</p>
+          </div>
+          <Select
+            class="w-[110px] sm:w-[180px]"
+            :model-value="settingStore.voiceSearchMode"
+            :options="voiceSearchModeOptions"
+            @update:model-value="settingStore.voiceSearchMode = $event as VoiceSearchMode"
+          />
+        </div>
         <template v-if="!isGeckoView">
           <div class="settings-divider"></div>
           <div class="settings-item">
@@ -720,16 +759,6 @@ const handleShowChangelog = async () => {
             />
           </div>
         </template>
-        <div class="settings-divider"></div>
-        <div class="settings-item">
-          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
-            <h3 class="font-semibold text-[15px] sm:text-base truncate">自动跳过错误</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">
-              播放失败时停留在当前歌曲，并按设定延迟自动尝试下一首
-            </p>
-          </div>
-          <Switch v-model="settingStore.autoNext" />
-        </div>
         <div class="settings-divider"></div>
         <div class="settings-item">
           <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
@@ -919,7 +948,7 @@ const handleShowChangelog = async () => {
           <Slider
             class="w-28 sm:w-48 flex-shrink-0"
             :model-value="androidLyricFontSize"
-            :min="1"
+            :min="5"
             :max="36"
             :step="1"
             show-value
@@ -1107,6 +1136,13 @@ const handleShowChangelog = async () => {
           >
             <Icon :icon="iconExternalLink" width="20" height="20" />
           </Button>
+        </div>
+        <div class="settings-divider"></div>
+        <div class="settings-item">
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">WebView 内核</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">{{ webviewEngineInfo }}</p>
+          </div>
         </div>
       </div>
     </section>

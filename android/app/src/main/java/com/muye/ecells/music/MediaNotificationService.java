@@ -58,6 +58,7 @@ public class MediaNotificationService extends MediaBrowserServiceCompat {
     private final Handler handler = new Handler(Looper.getMainLooper());
 
     private Bitmap cachedArtwork;
+    private String lastCoverUrl;
     private String currentTitle = "";
     private String currentArtist = "";
     private boolean isPlaying = false;
@@ -203,6 +204,7 @@ public class MediaNotificationService extends MediaBrowserServiceCompat {
             cachedArtwork.recycle();
             cachedArtwork = null;
         }
+        lastCoverUrl = null;
         
         // <== 新增：注销防社死广播
         try {
@@ -248,7 +250,7 @@ public class MediaNotificationService extends MediaBrowserServiceCompat {
 
         refreshNotification();
 
-        if (coverUrl != null && !coverUrl.isEmpty()) {
+        if (coverUrl != null && !coverUrl.isEmpty() && !coverUrl.equals(lastCoverUrl)) {
             loadCoverArtwork(coverUrl);
         }
     }
@@ -296,6 +298,7 @@ public class MediaNotificationService extends MediaBrowserServiceCompat {
 
     // ── Cover artwork loading ──
     private void loadCoverArtwork(String coverUrl) {
+        lastCoverUrl = coverUrl;
         new Thread(() -> {
             try {
                 URL url = new URL(coverUrl);

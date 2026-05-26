@@ -385,7 +385,7 @@ onUnmounted(() => {
         <div
           v-else-if="coverStyle === 'disc'"
           class="dvd-cover-wrap"
-          :class="{ 'is-paused': !isPlaying }"
+          :class="{ 'is-paused': !isPlaying || !active }"
           :style="{ width: `${coverSize}px`, height: `${coverSize}px` }"
         >
           <div class="dvd-rim"></div>
@@ -403,7 +403,7 @@ onUnmounted(() => {
         <div
           v-else-if="coverStyle === 'breathing'"
           class="breathing-cover-wrap"
-          :class="{ 'is-paused': !isPlaying }"
+          :class="{ 'is-paused': !isPlaying || !active }"
           :style="{ width: `${coverSize}px`, height: `${coverSize}px` }"
         >
           <Cover

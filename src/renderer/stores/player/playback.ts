@@ -6,6 +6,7 @@ import type { PlayerEngine } from '@/utils/player';
 import type { usePlaylistStore } from '../playlist';
 import type { useSettingStore } from '../setting';
 import { PERSONAL_FM_QUEUE_ID } from '../playlist';
+import { isGeckoView, NativeAudioBridge } from '@/utils/nativeBridge';
 import {
   buildMediaMeta,
   buildMediaState,
@@ -148,6 +149,37 @@ export const createPlaybackManager = (
       state.autoNextAttempts += 1;
       void skipToNextAfterFailure();
     }, delayMs);
+  };
+
+  const preloadNextTrack = (
+    currentResolvedId: string,
+    sourceList: Song[],
+    quality: string | undefined,
+  ) => {
+    if (!isGeckoView) return;
+    try {
+      const currentIdx = sourceList.findIndex(
+        (s) => String(s.id) === String(currentResolvedId),
+      );
+      if (currentIdx < 0) return;
+
+      let nextTrack: Song | undefined;
+      if (state.playMode === 'random' && state.shuffleQueue && state.shuffleQueue.length > 0) {
+        nextTrack = sourceList[state.shuffleQueue[0]];
+      } else if (currentIdx < sourceList.length - 1) {
+        nextTrack = sourceList[currentIdx + 1];
+      }
+      if (!nextTrack?.hash) return;
+      void resolver.resolveAudioUrl(nextTrack).then((resolved: any) => {
+        if (resolved?.url && nextTrack.hash) {
+          NativeAudioBridge.preloadCache({
+            url: resolved.url,
+            hash: nextTrack.hash,
+            quality: quality ?? '',
+          }).catch(() => {});
+        }
+      }).catch(() => {});
+    } catch {}
   };
 
   const playTrack = async (
@@ -340,6 +372,9 @@ export const createPlaybackManager = (
         window.clearTimeout(recoveryTimer);
         recoveryTimer = null;
       }
+
+      // Pre-cache next track for smoother transitions
+      preloadNextTrack(resolvedId, sourceList, resolved.quality);
 
       void resolver.fetchClimaxMarks(track);
     } catch (error) {

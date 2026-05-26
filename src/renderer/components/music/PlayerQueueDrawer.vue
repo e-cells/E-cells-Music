@@ -1144,7 +1144,6 @@ onBeforeUnmount(() => {
   touch-action: pan-y;
   user-select: none;
   -webkit-user-select: none;
-  will-change: transform;
 }
 
 .queue-slides.is-dragging {
@@ -1155,7 +1154,6 @@ onBeforeUnmount(() => {
   display: flex;
   width: 100%;
   height: 100%;
-  will-change: transform;
 }
 
 .queue-track.is-animated {

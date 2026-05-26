@@ -438,7 +438,6 @@ watch(
   transition:
     background 0.2s ease,
     width 0.2s ease;
-  will-change: transform;
 }
 
 .dark .scrollbar-thumb {

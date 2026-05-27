@@ -83,8 +83,8 @@
 
 ### 1. 克隆与安装依赖
 ```bash
-git clone [https://github.com/e-cells/EchoMusic-for-Android.git](https://github.com/e-cells/EchoMusic-for-Android.git)
-cd EchoMusic-for-Android
+git clone [https://github.com/e-cells/E-cells-Music.git](https://github.com/e-cells/E-cells-Music.git)
+cd E-cells-Music
 npm install --legacy-peer-deps
 ```
 

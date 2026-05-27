@@ -53,7 +53,7 @@
 运行本应用必须配合**自建**后端接口服务：
 - **后端项目地址**：[MakcRe/KuGouMusicApi](https://github.com/MakcRe/KuGouMusicApi)
 - ⚠️ **安全警告**：本项目不提供公共后端 API，请勿随意使用他人提供的公共服务，以免造成账号信息泄露！
-- **部署教程**：[图文教程](https://www.bilibili.com/opus/1206580399410511893)
+- **后端部署教程**：[点我查阅使用 Docker 部署后端服务的图文教程](https://www.bilibili.com/opus/1206580399410511893)
 
 
 **部署提示：**

@@ -108,7 +108,7 @@ export const createResolver = (
     effect: string,
     hash: string,
   ): Promise<string> => {
-    if (effect !== 'vocal' && effect !== 'accompaniment') return url;
+    if (effect !== 'vocal') return url;
     if (!url.toLowerCase().includes('.mkv')) return url;
 
     const trackNum = effect === 'vocal' ? 2 : 1;
@@ -162,7 +162,7 @@ export const createResolver = (
     const relateGoods = await ensureTrackRelateGoods(track, { forceRefresh: true });
 
     if (audioEffect !== 'none') {
-      const isVocalEffect = audioEffect === 'vocal' || audioEffect === 'accompaniment';
+      const isVocalEffect = audioEffect === 'vocal';
       const apiEffect = isVocalEffect ? 'acappella' : audioEffect;
 
       const matchedEffect = relateGoods.find((item) => item.quality === apiEffect && item.hash);

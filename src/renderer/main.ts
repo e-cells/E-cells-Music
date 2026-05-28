@@ -58,6 +58,16 @@ app.use(router);
 app.component('Icon', Icon);
 app.mount('#app');
 
+// APP 被杀死前强制持久化所有 store 状态（pagehide 是同步事件）
+window.addEventListener('pagehide', () => {
+  try {
+    const piniaState = pinia.state.value;
+    for (const storeId of Object.keys(piniaState)) {
+      localStorage.setItem(storeId, JSON.stringify(piniaState[storeId]));
+    }
+  } catch {}
+});
+
 schedulePreloadLyric();
 
 // 注册 Service Worker（PWA 后台播放 & 媒体按键支持）

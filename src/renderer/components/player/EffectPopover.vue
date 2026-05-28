@@ -18,13 +18,7 @@ const activeTab = ref<'effect' | 'eq'>('effect');
 
 const audioEffectOptions: readonly { value: AudioEffectValue; label: string }[] = [
   { value: 'none', label: '原声' },
-  { value: 'piano', label: '钢琴' },
   { value: 'vocal', label: '人声' },
-  { value: 'accompaniment', label: '伴奏' },
-  { value: 'subwoofer', label: '骨笛' },
-  { value: 'ancient', label: '尤克里里' },
-  { value: 'surnay', label: '唢呐' },
-  { value: 'dj', label: 'DJ' },
   { value: 'viper_tape', label: '蝰蛇母带' },
   { value: 'viper_atmos', label: '蝰蛇全景声' },
   { value: 'viper_clear', label: '蝰蛇超清' },
@@ -74,17 +68,21 @@ const resetGains = () => {
 interface Props {
   variant?: 'lyric' | 'bar';
   side?: 'top' | 'bottom';
+  popoverWidth?: number;
+  popoverHeight?: number;
 }
 
-withDefaults(defineProps<Props>(), {
+const props = withDefaults(defineProps<Props>(), {
   variant: 'bar',
   side: 'top',
+  popoverWidth: 420,
+  popoverHeight: 320,
 });
 </script>
 
 <template>
   <Popover
-    trigger="hover"
+    trigger="click"
     :side="side"
     align="end"
     :side-offset="8"
@@ -92,41 +90,61 @@ withDefaults(defineProps<Props>(), {
     content-class="effect-popover"
   >
     <template #trigger>
-      <Button
-        variant="unstyled"
-        size="none"
-        type="button"
-        class="p-2 transition-all hover:scale-110 active:scale-90"
-        :class="
-          player.audioEffect !== 'none' || gains.some((g: number) => g !== 0)
-            ? variant === 'lyric'
-              ? 'text-black dark:text-white'
-              : 'text-primary'
-            : variant === 'lyric'
-              ? 'text-black/40 dark:text-white/40'
-              : 'text-text-main/50 hover:text-primary'
-        "
-        title="音效与均衡器"
-      >
-        <span class="relative inline-flex w-5 h-5 items-center justify-center">
-          <Icon
-            :icon="iconSlidersHorizontal"
-            width="20"
-            height="20"
-            style="transform: translateY(3px)"
-          />
-          <Badge
-            v-if="currentTrack && settingStore.showAudioQualityBadge && audioEffectButtonBadge"
-            :count="audioEffectButtonBadge"
-            class="absolute -top-2"
-            :style="{ right: '-12px' }"
-          />
-        </span>
-      </Button>
+      <slot name="trigger">
+        <Button
+          variant="unstyled"
+          size="none"
+          type="button"
+          class="p-2 transition-all hover:scale-110 active:scale-90"
+          :class="
+            player.audioEffect !== 'none' || gains.some((g: number) => g !== 0)
+              ? variant === 'lyric'
+                ? 'text-black dark:text-white'
+                : 'text-primary'
+              : variant === 'lyric'
+                ? 'text-black/40 dark:text-white/40'
+                : 'text-text-main/50 hover:text-primary'
+          "
+          title="音效与均衡器"
+        >
+          <span class="relative inline-flex w-5 h-5 items-center justify-center">
+            <Icon
+              :icon="iconSlidersHorizontal"
+              width="20"
+              height="20"
+              style="transform: translateY(3px)"
+            />
+            <Badge
+              v-if="currentTrack && settingStore.showAudioQualityBadge && audioEffectButtonBadge"
+              :count="audioEffectButtonBadge"
+              class="absolute -top-2"
+              :style="{ right: '-12px' }"
+            />
+          </span>
+        </Button>
+      </slot>
     </template>
 
     <div class="effect-layout">
-      <!-- 左侧 Tab 切换 -->
+      <!-- 窄屏顶部 Tab（默认隐藏，@media 显示） -->
+      <div class="effect-top-tabs">
+        <button
+          class="top-tab-item"
+          :class="{ 'is-active': activeTab === 'effect' }"
+          @click="activeTab = 'effect'"
+        >
+          音效
+        </button>
+        <button
+          class="top-tab-item"
+          :class="{ 'is-active': activeTab === 'eq' }"
+          @click="activeTab = 'eq'"
+        >
+          均衡器
+        </button>
+      </div>
+
+      <!-- 宽屏侧边栏 Tab（窄屏隐藏） -->
       <div class="effect-sidebar">
         <button
           class="sidebar-item"
@@ -217,8 +235,9 @@ withDefaults(defineProps<Props>(), {
 
 <style>
 .effect-popover.echo-popover-content {
-  width: 420px;
-  height: 320px;
+  width: min(420px, calc(100vw - 16px));
+  height: auto;
+  max-height: min(380px, 72vh);
   padding: 0;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.75);
@@ -238,7 +257,7 @@ withDefaults(defineProps<Props>(), {
   height: 100%;
 }
 
-/* 侧边栏 */
+/* 侧边栏 — 宽屏默认，窄屏隐藏 */
 .effect-sidebar {
   width: 80px;
   background: rgba(0, 0, 0, 0.03);
@@ -247,6 +266,7 @@ withDefaults(defineProps<Props>(), {
   padding: 12px 6px;
   gap: 4px;
   border-right: 1px solid rgba(0, 0, 0, 0.05);
+  flex-shrink: 0;
 }
 
 .dark .effect-sidebar {
@@ -281,12 +301,55 @@ withDefaults(defineProps<Props>(), {
   color: white;
 }
 
+/* 窄屏顶部 tab — 默认隐藏 */
+.effect-top-tabs {
+  display: none;
+  flex-shrink: 0;
+  padding: 10px 12px 0;
+  gap: 6px;
+}
+
+.top-tab-item {
+  flex: 1;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-main);
+  opacity: 0.6;
+  transition: all 0.2s;
+  cursor: pointer;
+  border: none;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.dark .top-tab-item {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.top-tab-item.is-active {
+  opacity: 1;
+  background: var(--color-primary);
+  color: white;
+}
+
 /* 主面板 */
 .effect-main {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.effect-main::-webkit-scrollbar {
+  display: none;
 }
 
 .panel-content {
@@ -296,16 +359,16 @@ withDefaults(defineProps<Props>(), {
 }
 
 .panel-header {
-  height: 48px;
+  height: 44px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
+  padding: 0 14px;
   flex-shrink: 0;
 }
 
 .panel-title {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
   color: var(--color-text-main);
 }
@@ -330,7 +393,7 @@ withDefaults(defineProps<Props>(), {
 
 /* 均衡器特定样式 */
 .eq-container {
-  padding: 0 16px 16px 16px;
+  padding: 0 12px 14px;
   display: flex;
   flex-direction: column;
 }
@@ -338,15 +401,15 @@ withDefaults(defineProps<Props>(), {
 .eq-bands {
   display: flex;
   justify-content: space-between;
-  height: 150px;
+  height: 130px;
 }
 
 .eq-band {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  width: 28px;
+  gap: 6px;
+  width: 26px;
 }
 
 .eq-slider {
@@ -391,7 +454,7 @@ withDefaults(defineProps<Props>(), {
 }
 
 .eq-freq {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   color: var(--color-text-main);
   opacity: 0.4;
@@ -401,11 +464,11 @@ withDefaults(defineProps<Props>(), {
 .preset-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 5px;
 }
 
 .preset-chip {
-  padding: 4px 10px;
+  padding: 3px 9px;
   background: rgba(0, 0, 0, 0.05);
   border: 1px solid rgba(0, 0, 0, 0.05);
   border-radius: 9999px;
@@ -438,5 +501,53 @@ withDefaults(defineProps<Props>(), {
 
 .dark .preset-chip:hover {
   background: rgba(255, 255, 255, 0.1);
+}
+
+/* ── 窄屏响应式（竖屏手机） ── */
+@media (max-width: 440px) {
+  .effect-popover.echo-popover-content {
+    width: calc(100vw - 16px);
+    max-height: min(420px, 78vh);
+  }
+
+  .effect-layout {
+    flex-direction: column;
+  }
+
+  .effect-sidebar {
+    display: none;
+  }
+
+  .effect-top-tabs {
+    display: flex;
+  }
+
+  .eq-bands {
+    height: 120px;
+  }
+
+  .eq-band {
+    width: 24px;
+    gap: 4px;
+  }
+
+  .eq-thumb {
+    width: 10px;
+    height: 10px;
+  }
+
+  .eq-freq {
+    font-size: 8px;
+  }
+
+  .preset-chip {
+    font-size: 10px;
+    padding: 2px 7px;
+  }
+
+  .panel-header {
+    height: 38px;
+    padding: 0 10px;
+  }
 }
 </style>

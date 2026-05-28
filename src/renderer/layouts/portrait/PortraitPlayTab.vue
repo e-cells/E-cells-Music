@@ -2,6 +2,7 @@
 import { computed, ref, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import Cover from '@/components/ui/Cover.vue';
 import QualityPopover from '@/components/player/QualityPopover.vue';
+import EffectPopover from '@/components/player/EffectPopover.vue';
 import PlayerQueueDrawer from '@/components/music/PlayerQueueDrawer.vue';
 import CommentDrawer from '@/components/music/CommentDrawer.vue';
 import Popover from '@/components/ui/Popover.vue';
@@ -24,6 +25,11 @@ import {
   iconSkipForward,
   iconHeart,
   iconHeartFilled,
+  iconMusic,
+  iconSlidersHorizontal,
+  iconList,
+  iconMessageCircle,
+  iconTypography,
 } from '@/icons';
 
 const props = defineProps<{ active?: boolean }>();
@@ -38,6 +44,7 @@ const {
   cyclePlayMode,
   isQueueDrawerOpen,
   audioQualityButtonBadge,
+  audioEffectButtonBadge,
 } = usePlayerControls();
 
 const lyricStore = useLyricStore();
@@ -545,18 +552,40 @@ onUnmounted(() => {
       </div>
 
       <div class="extra-controls mt-5 mb-2">
+        <EffectPopover variant="lyric" side="top">
+          <template #trigger>
+            <button type="button" class="extra-icon-btn"
+              :class="{ 'is-active': playerStore.audioEffect !== 'none' || playerStore.equalizerGains.some((g: number) => g !== 0) }"
+              title="音效与均衡器"
+            >
+              <span class="relative inline-flex items-center justify-center">
+                <Icon :icon="iconSlidersHorizontal" width="22" height="22" />
+                <Badge v-if="currentTrack && settingStore.showAudioQualityBadge && audioEffectButtonBadge" :count="audioEffectButtonBadge" class="absolute -top-2" style="right: -12px" />
+              </span>
+            </button>
+          </template>
+        </EffectPopover>
         <QualityPopover>
           <template #trigger>
-            <button type="button" class="extra-btn">
-              <span class="relative">音质 <Badge v-if="currentTrack && settingStore.showAudioQualityBadge" :count="audioQualityButtonBadge" class="-right-5" /></span>
+            <button type="button" class="extra-icon-btn" title="音质">
+              <span class="relative inline-flex items-center justify-center">
+                <Icon :icon="iconMusic" width="22" height="22" />
+                <Badge v-if="currentTrack && settingStore.showAudioQualityBadge" :count="audioQualityButtonBadge" class="absolute -top-2" style="right: -12px" />
+              </span>
             </button>
           </template>
         </QualityPopover>
-        <button type="button" class="extra-btn" @click="isQueueDrawerOpen = true">
-          <span class="relative">列表 <Badge v-if="queueSongCount > 0" :count="queueSongCount > 99 ? '99+' : queueSongCount" class="-right-5" /></span>
+        <button type="button" class="extra-icon-btn" title="播放列表" @click="isQueueDrawerOpen = true">
+          <span class="relative inline-flex items-center justify-center">
+            <Icon :icon="iconList" width="22" height="22" />
+            <Badge v-if="queueSongCount > 0" :count="queueSongCount > 99 ? '99+' : queueSongCount" class="absolute -top-2" style="right: -12px" />
+          </span>
         </button>
-        <button type="button" class="extra-btn" @click="isCommentDrawerOpen = true">
-          <span class="relative">评论 <Badge v-if="commentCount > 0" :count="commentCount > 99 ? '99+' : commentCount" class="-right-5" /></span>
+        <button type="button" class="extra-icon-btn" title="评论" @click="isCommentDrawerOpen = true">
+          <span class="relative inline-flex items-center justify-center">
+            <Icon :icon="iconMessageCircle" width="22" height="22" />
+            <Badge v-if="commentCount > 0" :count="commentCount > 99 ? '99+' : commentCount" class="absolute -top-2" style="right: -12px" />
+          </span>
         </button>
 
         <Popover
@@ -568,8 +597,8 @@ onUnmounted(() => {
           content-class="portrait-lyric-settings-popover bg-bg-sidebar/95 backdrop-blur-xl border border-border-light/20 shadow-2xl rounded-2xl p-5"
         >
           <template #trigger>
-            <button type="button" class="extra-btn">
-              <span>字体</span>
+            <button type="button" class="extra-icon-btn" title="歌词字体">
+              <Icon :icon="iconTypography" width="22" height="22" />
             </button>
           </template>
           <div class="portrait-lyric-settings space-y-5">
@@ -1014,28 +1043,33 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 16px;
+  gap: 4px;
 }
 
-.extra-btn {
+.extra-icon-btn {
   display: flex;
   align-items: center;
-  gap: 6px;
-  height: 34px;
-  padding: 0 18px;
-  border-radius: 17px;
-  background: color-mix(in srgb, var(--color-text-main) 6%, transparent);
-  color: var(--color-text-main);
-  opacity: 0.85;
-  font-size: 13px;
-  font-weight: 600;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  color: color-mix(in srgb, var(--color-text-main) 50%, transparent);
   -webkit-tap-highlight-color: transparent;
-  border: 1px solid transparent;
+  transition: all 0.2s ease;
+  border: none;
+  background: transparent;
 }
 
-.extra-btn:active {
-  opacity: 1;
-  background: color-mix(in srgb, var(--color-text-main) 12%, transparent);
+.extra-icon-btn:active {
+  transform: scale(0.9);
+}
+
+.extra-icon-btn:hover {
+  color: var(--color-primary);
+}
+
+.extra-icon-btn.is-active {
+  color: var(--color-primary);
 }
 
 /* ── 动画类 ── */

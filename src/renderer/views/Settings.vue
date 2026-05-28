@@ -258,10 +258,12 @@ const refreshCacheInfo = async () => {
   } catch {}
 };
 
-const handleCacheSizeChange = async (mb: number) => {
-  settingStore.cacheSizeLimitMb = mb;
+const handleCacheSizeChange = async (mb: number | string) => {
+  const value = typeof mb === 'string' ? parseInt(mb, 10) : mb;
+  if (!Number.isFinite(value)) return;
+  settingStore.cacheSizeLimitMb = value;
   if (isGeckoView) {
-    await NativeAudioBridge.setCacheSizeLimit({ mb }).catch(() => {});
+    await NativeAudioBridge.setCacheSizeLimit({ mb: value }).catch(() => {});
     await refreshCacheInfo();
   }
 };
@@ -885,7 +887,10 @@ const handleShowChangelog = async () => {
           </div>
           <Switch
             :model-value="settingStore.autoPlayOnStart"
-            @update:model-value="settingStore.autoPlayOnStart = $event"
+            @update:model-value="(value) => {
+              settingStore.autoPlayOnStart = value;
+              settingStore.$persist();
+            }"
           />
         </div>
       </div>

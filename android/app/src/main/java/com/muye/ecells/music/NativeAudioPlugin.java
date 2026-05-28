@@ -10,6 +10,10 @@ import android.view.WindowManager;
 import android.media.AudioAttributes;
 import android.media.MediaPlayer;
 import android.media.PlaybackParams;
+import android.media.audiofx.Equalizer;
+import android.media.audiofx.BassBoost;
+import android.media.audiofx.Virtualizer;
+import android.media.audiofx.PresetReverb;
 import android.net.Uri;
 import android.os.Build;
 import android.Manifest;
@@ -39,6 +43,15 @@ public class NativeAudioPlugin {
     private Integer pendingSeekMs = null;
     private String currentCacheKey = null;
     private boolean playingFromCache = false;
+    private int lastKnownPositionMs = 0;
+
+    // AudioFX
+    private Equalizer equalizer;
+    private BassBoost bassBoost;
+    private Virtualizer virtualizer;
+    private PresetReverb reverb;
+    private short eqNumberOfBands = 0;
+    private int[] eqCenterFreqs;
 
     public NativeAudioPlugin(MainActivity activity, Object session) {
         this.activity = activity;
@@ -240,6 +253,9 @@ public class NativeAudioPlugin {
                 case "setPlaybackState": return onSetPlaybackStateSync(params);
                 case "lyricSeekTo": return onLyricSeekToSync(params);
                 case "setKeepScreenOn": return onSetKeepScreenOnSync(params);
+                // Audio effects
+                case "setEqualizer": return onSetEqualizerSync(params);
+                case "setAudioEffect": return onSetAudioEffectSync(params);
                 // APK update methods
                 case "getDeviceAbiInfo": return onGetDeviceAbiInfoSync();
                 case "downloadApk": return onDownloadApkSync(params);
@@ -1080,6 +1096,13 @@ public class NativeAudioPlugin {
                 int duration = mp.getDuration();
                 int position = mp.getCurrentPosition();
                 if (duration > 0 && position < duration - 3000) {
+                    // onCompletion 时 getCurrentPosition() 在某些设备上返回不准确的值，
+                    // 使用最后已知位置作为后备判断
+                    if (lastKnownPositionMs > 0 && lastKnownPositionMs >= duration - 3000) {
+                        Log.i(TAG, "Legitimate completion: lastKnownPos=" + lastKnownPositionMs
+                            + "ms, dur=" + duration + "ms (currentPos=" + position + "ms was inaccurate)");
+                        return false;
+                    }
                     Log.w(TAG, "Premature onCompletion: pos=" + position + "ms, dur=" + duration + "ms");
                     return true;
                 }
@@ -1117,7 +1140,9 @@ public class NativeAudioPlugin {
             @Override
             public void run() {
                 if (mediaPlayer != null && mediaPlayer.isPlaying()) {
-                    double time = mediaPlayer.getCurrentPosition() / 1000.0;
+                    int pos = mediaPlayer.getCurrentPosition();
+                    lastKnownPositionMs = pos;
+                    double time = pos / 1000.0;
                     emitEvent("timeUpdate", "{\"currentTime\":" + time + "}");
                 }
                 handler.postDelayed(this, 500);
@@ -1477,6 +1502,8 @@ public class NativeAudioPlugin {
     private void releasePlayer() {
         stopTimeUpdates();
         pendingSeekMs = null;
+        lastKnownPositionMs = 0;
+        releaseAudioEffects();
         if (mediaPlayer != null) {
             try {
                 mediaPlayer.release();
@@ -1488,5 +1515,144 @@ public class NativeAudioPlugin {
 
     public void release() {
         releasePlayer();
+    }
+
+    // ── AudioFX: Equalizer & Effects ──
+
+    private String onSetEqualizerSync(Map<String, String> params) {
+        String gainsStr = params.get("gains");
+        if (gainsStr == null || gainsStr.isEmpty()) return "{\"__nativeError\":\"gains is required\"}";
+        if (mediaPlayer == null) return "{\"__nativeError\":\"no audio loaded\"}";
+
+        try {
+            if (equalizer == null) {
+                int sessionId = mediaPlayer.getAudioSessionId();
+                equalizer = new Equalizer(0, sessionId);
+                eqNumberOfBands = equalizer.getNumberOfBands();
+                eqCenterFreqs = new int[eqNumberOfBands];
+                for (short i = 0; i < eqNumberOfBands; i++) {
+                    eqCenterFreqs[i] = equalizer.getCenterFreq(i);
+                }
+                equalizer.setEnabled(true);
+            }
+
+            String[] gainStrs = gainsStr.split(",");
+            int[] targetFreqs = {60, 170, 310, 600, 1000, 3000, 6000, 12000, 14000, 16000};
+
+            for (int i = 0; i < Math.min(gainStrs.length, 10); i++) {
+                float gainDb;
+                try { gainDb = Float.parseFloat(gainStrs[i].trim()); } catch (NumberFormatException e) { continue; }
+                short bandIdx = findClosestBand(targetFreqs[i]);
+                if (bandIdx >= 0) {
+                    short[] range = equalizer.getBandLevelRange();
+                    short millidB = (short) Math.max(range[0], Math.min(range[1], (int)(gainDb * 100)));
+                    equalizer.setBandLevel(bandIdx, millidB);
+                }
+            }
+            Log.i(TAG, "EQ applied: " + gainsStr);
+            return "{\"applied\":true}";
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to set equalizer", e);
+            return "{\"__nativeError\":\"" + e.getMessage().replace("\"", "'") + "\"}";
+        }
+    }
+
+    private String onSetAudioEffectSync(Map<String, String> params) {
+        String effect = params.get("effect");
+        if (effect == null) return "{\"__nativeError\":\"effect is required\"}";
+        if (mediaPlayer == null) return "{\"__nativeError\":\"no audio loaded\"}";
+
+        try {
+            int sessionId = mediaPlayer.getAudioSessionId();
+            releaseAudioEffects();
+
+            switch (effect) {
+                case "viper_atmos":
+                    virtualizer = new Virtualizer(0, sessionId);
+                    virtualizer.setStrength((short) 900);
+                    virtualizer.setEnabled(true);
+                    Log.i(TAG, "Applied Virtualizer for atmos");
+                    break;
+                case "viper_tape":
+                    reverb = new PresetReverb(0, sessionId);
+                    reverb.setPreset(PresetReverb.PRESET_PLATE);
+                    reverb.setEnabled(true);
+                    Log.i(TAG, "Applied PresetReverb for tape");
+                    break;
+                case "viper_clear":
+                    applyEqPresetEffect(sessionId, new int[]{0, 0, 0, 0, 0, 0, 0, 4, 4, 4});
+                    Log.i(TAG, "Applied high-freq boost for clear");
+                    break;
+                case "none":
+                default:
+                    Log.i(TAG, "Audio effects cleared");
+                    break;
+            }
+            return "{\"applied\":true,\"effect\":\"" + effect + "\"}";
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to set audio effect: " + effect, e);
+            return "{\"__nativeError\":\"" + e.getMessage().replace("\"", "'") + "\"}";
+        }
+    }
+
+    private void applyEqPresetEffect(int sessionId, int[] gains) {
+        try {
+            if (equalizer == null) {
+                equalizer = new Equalizer(0, sessionId);
+                eqNumberOfBands = equalizer.getNumberOfBands();
+                eqCenterFreqs = new int[eqNumberOfBands];
+                for (short i = 0; i < eqNumberOfBands; i++) {
+                    eqCenterFreqs[i] = equalizer.getCenterFreq(i);
+                }
+                equalizer.setEnabled(true);
+            }
+            int[] targetFreqs = {60, 170, 310, 600, 1000, 3000, 6000, 12000, 14000, 16000};
+            for (int i = 0; i < Math.min(gains.length, targetFreqs.length); i++) {
+                short bandIdx = findClosestBand(targetFreqs[i]);
+                if (bandIdx >= 0) {
+                    short[] range = equalizer.getBandLevelRange();
+                    short millidB = (short) Math.max(range[0], Math.min(range[1], gains[i] * 100));
+                    equalizer.setBandLevel(bandIdx, millidB);
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to apply EQ preset effect", e);
+        }
+    }
+
+    private short findClosestBand(int targetFreqHz) {
+        if (eqNumberOfBands == 0 || eqCenterFreqs == null) return -1;
+        int targetMilliHz = targetFreqHz * 1000;
+        short closest = 0;
+        int minDelta = Integer.MAX_VALUE;
+        for (short i = 0; i < eqNumberOfBands; i++) {
+            int delta = Math.abs(eqCenterFreqs[i] - targetMilliHz);
+            if (delta < minDelta) {
+                minDelta = delta;
+                closest = i;
+            }
+        }
+        return closest;
+    }
+
+    private void releaseAudioEffects() {
+        if (equalizer != null) {
+            try { equalizer.release(); } catch (Exception ignored) {}
+            equalizer = null;
+            eqNumberOfBands = 0;
+            eqCenterFreqs = null;
+        }
+        if (bassBoost != null) {
+            try { bassBoost.release(); } catch (Exception ignored) {}
+            bassBoost = null;
+        }
+        if (virtualizer != null) {
+            try { virtualizer.release(); } catch (Exception ignored) {}
+            virtualizer = null;
+        }
+        if (reverb != null) {
+            try { reverb.release(); } catch (Exception ignored) {}
+            reverb = null;
+        }
     }
 }

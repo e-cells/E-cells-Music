@@ -42,6 +42,7 @@ export const createAudioManager = (
     const nextEffect = normalizeEffect(effect);
     if (state.audioEffect === nextEffect) return;
     state.audioEffect = nextEffect;
+    engine.setEffect(nextEffect);
     if (!state.currentTrackId) return;
     if (state.isLoading || state.pendingSettingRefresh) {
       state.pendingSettingRefresh = true;

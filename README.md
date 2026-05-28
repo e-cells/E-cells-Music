@@ -1,4 +1,4 @@
-# 易格音乐 (E-cells-Music for Android) ── 高颜值的酷狗概念版第三方安卓音乐播放器
+# 易格音乐 (E-cells-Music) ── 高颜值的酷狗概念版第三方安卓音乐播放器
 
 ## 📖 项目简介
 本项目是基于开源项目 **[EchoMusic](https://github.com/hoowhoami/EchoMusic)** 的前端代码，经过跨平台二次开发、原生层重构并打包打造而成的 Android 客户端。

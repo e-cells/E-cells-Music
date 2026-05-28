@@ -56,13 +56,7 @@ export const normalizeQuality = (value: string | undefined): AudioQualityValue =
 export const normalizeEffect = (value: string | undefined): AudioEffectValue => {
   const options: AudioEffectValue[] = [
     'none',
-    'piano',
     'vocal',
-    'accompaniment',
-    'subwoofer',
-    'ancient',
-    'surnay',
-    'dj',
     'viper_tape',
     'viper_atmos',
     'viper_clear',

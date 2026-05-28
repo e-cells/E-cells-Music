@@ -7,13 +7,7 @@ export type AudioQualityValue = '128' | '320' | 'flac' | 'high' | 'super';
 
 export type AudioEffectValue =
   | 'none'
-  | 'piano'
   | 'vocal'
-  | 'accompaniment'
-  | 'subwoofer'
-  | 'ancient'
-  | 'surnay'
-  | 'dj'
   | 'viper_tape'
   | 'viper_atmos'
   | 'viper_clear';

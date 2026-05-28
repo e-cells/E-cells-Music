@@ -1,6 +1,7 @@
 import { Howl } from 'howler';
 import { isGeckoView } from './nativeBridge';
 import NativeAudio from './nativeAudio';
+import { WebAudioEffectEngine } from './webAudioEffectEngine';
 import logger from './logger';
 
 export interface PlayerEngineEvents {
@@ -75,6 +76,11 @@ export class PlayerEngine {
   private howlTimer: ReturnType<typeof setInterval> | null = null;
   private loopFile = false;
 
+  // Web Audio effect engine (Howler backend only)
+  private webAudioEngine: WebAudioEffectEngine | null = null;
+  private lastEqualizerGains: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  private lastEffect: string = 'none';
+
   // Native audio listener cleanup
   private nativeListeners: Array<{ remove: () => void }> = [];
 
@@ -85,6 +91,7 @@ export class PlayerEngine {
       this.bindNativeAudioEvents();
       logger.info('PlayerEngine', 'Using native Android audio engine');
     } else {
+      this.webAudioEngine = new WebAudioEffectEngine();
       logger.info('PlayerEngine', 'Using Howler.js browser audio engine (online backend mode)');
     }
   }
@@ -170,6 +177,9 @@ export class PlayerEngine {
 
   private unloadHowl(): void {
     this.stopHowlTimer();
+    if (this.webAudioEngine) {
+      this.webAudioEngine.disconnect();
+    }
     if (this.howl) {
       this.howl.unload();
       this.howl = null;
@@ -247,6 +257,10 @@ export class PlayerEngine {
         url,
         ...(this.sourceHash ? { hash: this.sourceHash } : {}),
         ...(this.sourceQuality ? { quality: this.sourceQuality } : {}),
+      }).then(() => {
+        if (this.lastEffect !== 'none') {
+          NativeAudio.setAudioEffect({ effect: this.lastEffect }).catch(() => {});
+        }
       }).catch((err) => {
         logger.error('PlayerEngine', 'Native loadAudio error', { err });
         const evt = new Event('error');
@@ -266,6 +280,14 @@ export class PlayerEngine {
         onload: () => {
           this.durationValue = this.howl?.duration() ?? 0;
           this.events.durationChange?.(this.durationValue);
+          // Attach Web Audio effect engine to Howl's <audio> element
+          if (this.webAudioEngine && this.howl) {
+            this.webAudioEngine.attachToHowl(this.howl);
+            this.webAudioEngine.setEqualizer(this.lastEqualizerGains);
+            if (this.lastEffect !== 'none') {
+              this.webAudioEngine.setEffect(this.lastEffect);
+            }
+          }
         },
         onplay: () => {
           this.startHowlTimer();
@@ -328,6 +350,7 @@ export class PlayerEngine {
     } else if (useNativeAudio) {
       await NativeAudio.play();
     } else if (this.howl) {
+      if (this.webAudioEngine) await this.webAudioEngine.resume();
       this.howl.play();
     }
   }
@@ -344,6 +367,7 @@ export class PlayerEngine {
       await NativeAudio.pause();
     } else if (this.howl) {
       this.howl.pause();
+      if (this.webAudioEngine) void this.webAudioEngine.suspend();
     }
   }
 
@@ -364,8 +388,26 @@ export class PlayerEngine {
   }
 
   setEqualizer(gains: number[]): void {
+    this.lastEqualizerGains = [...gains];
     if (hasMpv) {
       mpv!.setEqualizer(gains);
+    } else if (useNativeAudio) {
+      NativeAudio.setEqualizer({ gains: gains.join(',') }).catch((err) => {
+        logger.warn('PlayerEngine', 'Native setEqualizer failed', { err });
+      });
+    } else if (this.webAudioEngine) {
+      this.webAudioEngine.setEqualizer(gains);
+    }
+  }
+
+  setEffect(effect: string): void {
+    this.lastEffect = effect;
+    if (useNativeAudio) {
+      NativeAudio.setAudioEffect({ effect }).catch((err) => {
+        logger.warn('PlayerEngine', 'Native setAudioEffect failed', { err });
+      });
+    } else if (this.webAudioEngine) {
+      this.webAudioEngine.setEffect(effect);
     }
   }
 
@@ -383,6 +425,9 @@ export class PlayerEngine {
       mpv!.setVolume(next);
     } else if (useNativeAudio) {
       NativeAudio.setVolume({ volume: next }).catch(() => {});
+    } else if (this.webAudioEngine && this.webAudioEngine.isConnected()) {
+      this.webAudioEngine.setVolume(next);
+      if (this.howl) this.howl.volume(1.0);
     } else if (this.howl) {
       this.howl.volume(next);
     }

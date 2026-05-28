@@ -58,6 +58,9 @@ export interface NativeAudioPlugin {
   getCacheInfo(): Promise<{ sizeBytes: number; fileCount: number; maxSizeBytes: number }>;
   clearCache(): Promise<void>;
   setCacheSizeLimit(options: { mb: number }): Promise<void>;
+
+  setEqualizer(options: { gains: string }): Promise<void>;
+  setAudioEffect(options: { effect: string }): Promise<void>;
 }
 
 const NativeAudio: NativeAudioPlugin = isGeckoView
@@ -81,6 +84,8 @@ const NativeAudio: NativeAudioPlugin = isGeckoView
       getCacheInfo: () => NativeAudioBridge.getCacheInfo(),
       clearCache: () => NativeAudioBridge.clearCache().then(() => {}),
       setCacheSizeLimit: (opts) => NativeAudioBridge.setCacheSizeLimit(opts).then(() => {}),
+      setEqualizer: (opts) => NativeAudioBridge.setEqualizer(opts).then(() => {}),
+      setAudioEffect: (opts) => NativeAudioBridge.setAudioEffect(opts).then(() => {}),
     }
   : {
       // Fallback stubs when not in GeckoView (shouldn't be used)
@@ -101,6 +106,8 @@ const NativeAudio: NativeAudioPlugin = isGeckoView
       getCacheInfo: () => Promise.resolve({ sizeBytes: 0, fileCount: 0, maxSizeBytes: 0 }),
       clearCache: () => Promise.resolve(),
       setCacheSizeLimit: () => Promise.resolve(),
+      setEqualizer: () => Promise.resolve(),
+      setAudioEffect: () => Promise.resolve(),
     };
 
 export default NativeAudio;

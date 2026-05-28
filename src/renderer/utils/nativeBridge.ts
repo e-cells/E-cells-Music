@@ -93,6 +93,8 @@ export const NativeAudioBridge = {
   setCacheSizeLimit: (options: { mb: number }) => nativeCall('setCacheSizeLimit', options),
   preloadCache: (options: { url: string; hash: string; quality: string }) =>
     nativeCall('preloadCache', options),
+  setEqualizer: (options: { gains: string }) => nativeCall('setEqualizer', options),
+  setAudioEffect: (options: { effect: string }) => nativeCall('setAudioEffect', options),
   addListener,
 };
 

@@ -134,7 +134,7 @@ export const initAndroidLyricSync = async () => {
   });
 
   // Poll native lock state via setTimeout chain (5s interval, avoids timer pile-up)
-  let lockPollTimer: ReturnType<typeof setTimeout> | null = null;
+  let lockPollTimer: number | null = null;
   const pollLockState = async () => {
     if (!desktopLyricStore.settings.enabled) {
       lockPollTimer = window.setTimeout(pollLockState, 5000);

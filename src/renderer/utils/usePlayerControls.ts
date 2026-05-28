@@ -12,6 +12,14 @@ import { useToastStore } from '@/stores/toast';
 import type { Song } from '@/models/song';
 import type { AudioEffectValue, AudioQualityValue, PlayMode } from '@/types';
 import { hasSongQuality, isSameSong, resolveEffectiveSongQuality } from '@/utils/song';
+
+const EFFECT_SHORT_LABELS: Record<string, string> = {
+  vocal: '人声',
+  viper_tape: '母带',
+  viper_atmos: '全景',
+  viper_clear: '超清',
+};
+
 import {
   iconRepeat,
   iconRepeatOff,
@@ -172,7 +180,10 @@ export function usePlayerControls() {
   });
 
   const audioEffectButtonBadge = computed(() => {
-    if (player.currentResolvedAudioEffect !== 'none') return 'FX';
+    const effect = player.audioEffect;
+    if (effect !== 'none' && EFFECT_SHORT_LABELS[effect]) {
+      return EFFECT_SHORT_LABELS[effect];
+    }
     if (player.equalizerGains.some((g) => g !== 0)) return 'EQ';
     return null;
   });

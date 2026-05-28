@@ -26,13 +26,7 @@ const QUALITY_LABEL_MAP: Record<string, string> = {
 };
 
 const EFFECT_QUALITIES = new Set([
-  'piano',
   'vocal',
-  'accompaniment',
-  'subwoofer',
-  'ancient',
-  'surnay',
-  'dj',
   'viper_tape',
   'viper_atmos',
   'viper_clear',

@@ -299,6 +299,18 @@ const testConnection = async () => {
   }
 };
 
+// ── 播放体验设置 ──
+const handleAutoPlayOnStartChange = (value: boolean) => {
+  settingStore.autoPlayOnStart = value;
+  // 绕过 pinia-plugin-persistedstate，直接调用 localStorage.setItem
+  // 确保覆盖函数中的 window.prompt 桥立即同步到 SharedPreferences
+  try {
+    window.localStorage.setItem('setting', JSON.stringify(settingStore.$state));
+  } catch (err) {
+    console.error('立即保存设置失败:', err);
+  }
+};
+
 // ── 主题色与模式选项 ──
 const accentModeOptions: { label: string; value: AccentMode }[] = [
   { label: '跟随封面', value: 'cover' },
@@ -887,12 +899,7 @@ const handleShowChangelog = async () => {
           </div>
           <Switch
             :model-value="settingStore.autoPlayOnStart"
-            @update:model-value="(value: boolean) => {
-              settingStore.autoPlayOnStart = value;
-              // 绕过 pinia-plugin-persistedstate，直接调用 localStorage.setItem
-              // 确保覆盖函数中的 window.prompt 桥立即同步到 SharedPreferences
-              try { localStorage.setItem('setting', JSON.stringify(settingStore.$state)); } catch {}
-            }"
+            @update:model-value="handleAutoPlayOnStartChange"
           />
         </div>
       </div>

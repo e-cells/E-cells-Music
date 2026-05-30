@@ -1,23 +1,3 @@
-非常感谢您提供真实的原版代码！看了 `main.ts` 中的逻辑后，真相大白了。
-
-### 为什么之前不保存：
-
-在您的 `main.ts` 中，您非常聪明地重写了 `localStorage.setItem`，让它在每次写入时立刻通过 `window.prompt` 调用 Android 原生的 `SharedPreferences`。
-但这带来了一个前提要求：**数据的保存必须是同步执行的**。Pinia 的持久化插件 (`pinia-plugin-persistedstate`) 在某些情况下（例如深度对象变更）可能是基于 Vue 的 `nextTick` 异步队列来触发保存的。当您切换开关后**瞬间**杀掉 APP 时，Vue 的异步队列还没来得及执行 `localStorage.setItem`，APP 就已经被销毁了，从而导致了 Native Bridge 拦截不到最新的设置。
-
-### 本次彻底修复的核心：
-
-1. **强制同步保存（解决实时保存）**：利用 Pinia 的 `$subscribe` API，并加上 `{ flush: 'sync' }` 选项。这样一来，无论什么组件修改了设置，都会**立刻、同步**地调用 `localStorage.setItem`，从而瞬间触发您在 `main.ts` 中写的原生拦截器，保证数据 100% 实时落盘。
-2. **彻底解决排版挤压（解决竖屏显示不全）**：
-* 将左侧文本容器的 `truncate` 移除，替换为 `break-words whitespace-normal` 允许其自然多行换行。
-* 为右侧的所有操作控件（`Switch`, `Slider`, `Select`, `Button`）增加 `shrink-0` 类名，防止文字过长时把控件挤压变形或挤出屏幕。
-* 对底部的 `Dialog` 弹窗增加响应式最大宽度 `width: '90vw', maxWidth: '420px'`，防止小屏幕下弹窗出界。
-
-
-
-这是基于您**真实代码**的最终完美修复版，请直接覆盖您的 `Settings.vue`：
-
-```vue
 <script setup lang="ts">
 import { computed, ref, onMounted, onUnmounted, watch } from 'vue';
 import { useSettingStore, type PortraitCoverStyle, type VoiceSearchMode } from '@/stores/setting';
@@ -51,9 +31,12 @@ import {
   iconPalette,
   iconPlayerPlay,
   iconVolume2,
+  iconFlask,
   iconInfo,
   iconExternalLink,
+  iconChevronRight,
   iconWorld,
+  iconTypography,
   iconDatabase,
 } from '@/icons';
 
@@ -64,20 +47,6 @@ const themeStore = useThemeStore();
 const toastStore = useToastStore();
 const desktopLyricStore = useDesktopLyricStore();
 const showDisclaimer = ref(false);
-
-// ── 实时保存修复（解决杀后台不保存） ──
-// 使用 flush: 'sync' 强制同步保存，配合您 main.ts 中重写的 localStorage 原生拦截，实现瞬间落盘
-settingStore.$subscribe((mutation, state) => {
-  try { window.localStorage.setItem('setting', JSON.stringify(state)); } catch {}
-}, { detached: true, flush: 'sync' });
-
-themeStore.$subscribe((mutation, state) => {
-  try { window.localStorage.setItem('theme', JSON.stringify(state)); } catch {}
-}, { detached: true, flush: 'sync' });
-
-lyricStore.$subscribe((mutation, state) => {
-  try { window.localStorage.setItem('lyric', JSON.stringify(state)); } catch {}
-}, { detached: true, flush: 'sync' });
 
 // ── Android 桌面歌词 ──
 const androidLyricEnabled = ref(false);
@@ -101,8 +70,14 @@ const saveAndroidLyricState = () => {
     localStorage.setItem(`${ANDROID_LYRIC_PREFIX}darkColorIndex`, String(androidLyricDarkColorIndex.value));
     localStorage.setItem(`${ANDROID_LYRIC_PREFIX}colorIndex`, String(androidLyricLightColorIndex.value)); // 兼容
     localStorage.setItem(`${ANDROID_LYRIC_PREFIX}doubleLine`, String(androidLyricDoubleLine.value));
-    localStorage.setItem(`${ANDROID_LYRIC_PREFIX}widthPercent`, String(androidLyricWidthPercent.value));
-    localStorage.setItem(`${ANDROID_LYRIC_PREFIX}strokeEnabled`, String(androidLyricStrokeEnabled.value));
+    localStorage.setItem(
+      `${ANDROID_LYRIC_PREFIX}widthPercent`,
+      String(androidLyricWidthPercent.value),
+    );
+    localStorage.setItem(
+      `${ANDROID_LYRIC_PREFIX}strokeEnabled`,
+      String(androidLyricStrokeEnabled.value),
+    );
     localStorage.setItem(`${ANDROID_LYRIC_PREFIX}alignment`, androidLyricAlignment.value);
     localStorage.setItem(`${ANDROID_LYRIC_PREFIX}locked`, String(androidLyricLocked.value));
   } catch {}
@@ -111,16 +86,29 @@ const saveAndroidLyricState = () => {
 const restoreAndroidLyricState = async () => {
   try {
     const nativeSettings = (await NativeLyricBridge.getLyricSettings().catch(() => null)) as any;
-    if (nativeSettings && typeof nativeSettings === 'object' && nativeSettings.fontSize !== undefined) {
-      if (typeof nativeSettings.fontSize === 'number') androidLyricFontSize.value = nativeSettings.fontSize;
-      if (typeof nativeSettings.lightColorIndex === 'number') androidLyricLightColorIndex.value = nativeSettings.lightColorIndex;
-      if (typeof nativeSettings.darkColorIndex === 'number') androidLyricDarkColorIndex.value = nativeSettings.darkColorIndex;
-      if (typeof nativeSettings.doubleLine === 'boolean') androidLyricDoubleLine.value = nativeSettings.doubleLine;
-      if (typeof nativeSettings.locked === 'boolean') androidLyricLocked.value = nativeSettings.locked;
-      if (typeof nativeSettings.widthPercent === 'number') androidLyricWidthPercent.value = nativeSettings.widthPercent;
-      if (typeof nativeSettings.strokeEnabled === 'boolean') androidLyricStrokeEnabled.value = nativeSettings.strokeEnabled;
-      if (typeof nativeSettings.alignment === 'string') androidLyricAlignment.value = nativeSettings.alignment;
-      if (typeof nativeSettings.enabled === 'boolean') androidLyricEnabled.value = nativeSettings.enabled;
+    if (
+      nativeSettings &&
+      typeof nativeSettings === 'object' &&
+      nativeSettings.fontSize !== undefined
+    ) {
+      if (typeof nativeSettings.fontSize === 'number')
+        androidLyricFontSize.value = nativeSettings.fontSize;
+      if (typeof nativeSettings.lightColorIndex === 'number')
+        androidLyricLightColorIndex.value = nativeSettings.lightColorIndex;
+      if (typeof nativeSettings.darkColorIndex === 'number')
+        androidLyricDarkColorIndex.value = nativeSettings.darkColorIndex;
+      if (typeof nativeSettings.doubleLine === 'boolean')
+        androidLyricDoubleLine.value = nativeSettings.doubleLine;
+      if (typeof nativeSettings.locked === 'boolean')
+        androidLyricLocked.value = nativeSettings.locked;
+      if (typeof nativeSettings.widthPercent === 'number')
+        androidLyricWidthPercent.value = nativeSettings.widthPercent;
+      if (typeof nativeSettings.strokeEnabled === 'boolean')
+        androidLyricStrokeEnabled.value = nativeSettings.strokeEnabled;
+      if (typeof nativeSettings.alignment === 'string')
+        androidLyricAlignment.value = nativeSettings.alignment;
+      if (typeof nativeSettings.enabled === 'boolean')
+        androidLyricEnabled.value = nativeSettings.enabled;
     } else {
       const savedFontSize = localStorage.getItem(`${ANDROID_LYRIC_PREFIX}fontSize`);
       const savedLightColorIndex = localStorage.getItem(`${ANDROID_LYRIC_PREFIX}lightColorIndex`);
@@ -322,47 +310,52 @@ const accentPresets = ACCENT_PRESETS;
 const showAccentPicker = ref(false);
 const accentPresetValues = accentPresets.map((item) => item.color);
 
+const keepAliveOptions = [
+  { label: '为您推荐', value: 'home' },
+  { label: '每日推荐', value: 'recommend-songs' },
+  { label: '排行榜', value: 'ranking' },
+  { label: '探索发现', value: 'explore' },
+  { label: '搜索', value: 'search-page' },
+  { label: '我的云盘', value: 'cloud' },
+  { label: '我最喜爱', value: 'favorites' },
+  { label: '歌单详情', value: 'playlist-detail' },
+  { label: '歌手详情', value: 'artist-detail' },
+  { label: '专辑详情', value: 'album-detail' },
+];
+
 const lyricColorPicker = useLyricColorPicker();
 
 const lyricFontSizeLabel = computed(() => `${Math.round(lyricStore.fontScale * 100)}%`);
+const lyricFontWeightLabel = computed(() => `W${lyricStore.fontWeightValue}`);
 
-const audioQualityOptions = [
-  { label: '标准品质', value: '128' },
-  { label: 'HQ 高品质', value: '320' },
-  { label: 'SQ 无损品质', value: 'flac' },
-  { label: 'Hi-Res 品质', value: 'high' },
-  { label: 'DSD 臻品音质', value: 'super' },
-];
+const systemFontOptions = ref<{ label: string; value: string }[]>([]);
+const globalFontOptions = computed(() => [
+  { label: '系统默认', value: 'system-ui' },
+  ...systemFontOptions.value,
+]);
+const lyricFontOptions = computed(() => [
+  { label: '跟随全局', value: 'follow' },
+  { label: '系统默认', value: 'system-ui' },
+  ...systemFontOptions.value,
+]);
 
-const themeOptions = [
-  { label: '跟随系统', value: 'system' },
-  ...(isGeckoView ? [{ label: '跟随光感器', value: 'sensor' }] : []),
-  { label: '浅色模式', value: 'light' },
-  { label: '深色模式', value: 'dark' },
-];
-
-const orientationOptions = [
-  { label: '自动旋转', value: 'auto' },
-  { label: '横屏锁定', value: 'landscape' },
-  { label: '竖屏锁定', value: 'portrait' },
-];
-
-const portraitCoverStyleOptions = [
-  { label: '经典方形', value: 'square' },
-  { label: '光盘旋转', value: 'disc' },
-  { label: '呼吸脉动', value: 'breathing' },
-];
-
-const voiceSearchModeOptions = [
-  { label: '全部结果', value: 'all' },
-  { label: '仅播首曲', value: 'first' },
-];
+const fetchSystemFonts = async () => {
+  const fonts = await settingStore.fetchSystemFonts();
+  const sorted = fonts.slice().sort((a, b) => {
+    if (a === b) return 0;
+    if (a.startsWith(b)) return 1;
+    if (b.startsWith(a)) return -1;
+    return a.localeCompare(b);
+  });
+  systemFontOptions.value = sorted.map((name) => ({ label: name, value: name }));
+};
 
 onMounted(() => {
   if (!isGeckoView) {
     settingStore.syncCloseBehavior();
     settingStore.syncTheme();
     void settingStore.hydrateAppInfo();
+    void fetchSystemFonts();
   }
   if (isGeckoView) {
     void restoreAndroidLyricState();
@@ -392,11 +385,21 @@ onUnmounted(() => {
   }
 });
 
+const handleVolumeNormalizationChange = (enabled: boolean) => {
+  settingStore.volumeNormalization = enabled;
+  playerStore.setVolumeNormalization(enabled);
+};
+
+const handleReferenceLufsSlider = (value: number) => {
+  settingStore.volumeNormalizationLufs = value;
+  playerStore.setReferenceLufs(value);
+};
+
 const showConfirmClear = ref(false);
 const showChangelog = ref(false);
 const changelogHtml = ref('');
 
-// ── 版本获取与更新检测相关 ──
+// ── 新增：版本获取与更新检测相关 ──
 const isCheckingUpdate = ref(false);
 const showUpdateDialog = ref(false);
 const latestVersionInfo = ref({
@@ -407,6 +410,7 @@ const latestVersionInfo = ref({
   apkFileName: '',
 });
 
+// Android in-app update state
 const updateDownloadPercent = ref(0);
 const updateDownloadStatus = ref<'idle' | 'downloading' | 'downloaded' | 'error'>('idle');
 const updateDownloadError = ref('');
@@ -415,6 +419,7 @@ let updateProgressListener: { remove: () => void } | null = null;
 let updateCompleteListener: { remove: () => void } | null = null;
 let updateErrorListener: { remove: () => void } | null = null;
 
+// 计算当前APP版本：优先使用主进程注入的 appVersion，降级使用 package.json 的 version
 const currentAppVersion = computed(() => settingStore.appVersion || pkg.version || '1.0.0');
 
 const aboutVersionText = computed(() => {
@@ -445,6 +450,7 @@ const webviewEngineInfo = computed(() => {
   return '未知';
 });
 
+// 版本对比工具函数
 const compareVersions = (v1: string, v2: string) => {
   const p1 = v1.replace(/^v/i, '').split('.').map(Number);
   const p2 = v2.replace(/^v/i, '').split('.').map(Number);
@@ -457,6 +463,7 @@ const compareVersions = (v1: string, v2: string) => {
   return 0;
 };
 
+// 从 GitHub Releases 获取最新版本
 const checkForUpdates = async () => {
   if (isCheckingUpdate.value) return;
   isCheckingUpdate.value = true;
@@ -470,6 +477,7 @@ const checkForUpdates = async () => {
       let apkDownloadUrl = '';
       let apkFileName = '';
 
+      // Auto-detect ABI and match APK for Android
       if (isGeckoView && data.assets && data.assets.length > 0) {
         try {
           const abiInfo = await NativeUpdateBridge.getDeviceAbiInfo();
@@ -499,6 +507,7 @@ const checkForUpdates = async () => {
     }
   } catch (error) {
     toastStore.warning('检查更新失败，请检查网络连接');
+    console.error('Update check failed:', error);
   } finally {
     isCheckingUpdate.value = false;
   }
@@ -523,6 +532,8 @@ const handleUpdateDownload = async () => {
     goToReleasePage();
     return;
   }
+
+  // Check install permission
   try {
     const perm = await NativeUpdateBridge.checkInstallPermission();
     if (!perm.granted) {
@@ -534,20 +545,29 @@ const handleUpdateDownload = async () => {
 
   cleanupUpdateListeners();
 
-  updateProgressListener = NativeUpdateBridge.addListener('updateDownloadProgress', (data: any) => {
-    updateDownloadStatus.value = 'downloading';
-    updateDownloadPercent.value = Math.round((data.percent || 0) * 100);
-  });
-  updateCompleteListener = NativeUpdateBridge.addListener('updateDownloadComplete', (data: any) => {
-    updateDownloadStatus.value = 'downloaded';
-    downloadedApkPath.value = data.filePath || '';
-    cleanupUpdateListeners();
-  });
-  updateErrorListener = NativeUpdateBridge.addListener('updateDownloadError', (data: any) => {
-    updateDownloadStatus.value = 'error';
-    updateDownloadError.value = data.error || '下载失败';
-    cleanupUpdateListeners();
-  });
+  updateProgressListener = NativeUpdateBridge.addListener(
+    'updateDownloadProgress',
+    (data: any) => {
+      updateDownloadStatus.value = 'downloading';
+      updateDownloadPercent.value = Math.round((data.percent || 0) * 100);
+    }
+  );
+  updateCompleteListener = NativeUpdateBridge.addListener(
+    'updateDownloadComplete',
+    (data: any) => {
+      updateDownloadStatus.value = 'downloaded';
+      downloadedApkPath.value = data.filePath || '';
+      cleanupUpdateListeners();
+    }
+  );
+  updateErrorListener = NativeUpdateBridge.addListener(
+    'updateDownloadError',
+    (data: any) => {
+      updateDownloadStatus.value = 'error';
+      updateDownloadError.value = data.error || '下载失败';
+      cleanupUpdateListeners();
+    }
+  );
 
   updateDownloadStatus.value = 'downloading';
   updateDownloadPercent.value = 0;
@@ -582,6 +602,39 @@ watch(showUpdateDialog, (open) => {
     cleanupUpdateListeners();
   }
 });
+// ── 新增结束 ──
+
+const audioQualityOptions = [
+  { label: '标准品质', value: '128' },
+  { label: 'HQ 高品质', value: '320' },
+  { label: 'SQ 无损品质', value: 'flac' },
+  { label: 'Hi-Res 品质', value: 'high' },
+  { label: 'DSD 臻品音质', value: 'super' },
+];
+
+const themeOptions = [
+  { label: '跟随系统', value: 'system' },
+  ...(isGeckoView ? [{ label: '跟随光感器', value: 'sensor' }] : []),
+  { label: '浅色模式', value: 'light' },
+  { label: '深色模式', value: 'dark' },
+];
+
+const orientationOptions = [
+  { label: '自动旋转', value: 'auto' },
+  { label: '横屏锁定', value: 'landscape' },
+  { label: '竖屏锁定', value: 'portrait' },
+];
+
+const portraitCoverStyleOptions = [
+  { label: '经典方形', value: 'square' },
+  { label: '光盘旋转', value: 'disc' },
+  { label: '呼吸脉动', value: 'breathing' },
+];
+
+const voiceSearchModeOptions = [
+  { label: '全部结果', value: 'all' },
+  { label: '仅播首曲', value: 'first' },
+];
 
 const handleOpenExternalUrl = async (url: string) => {
   if (isGeckoView) {
@@ -623,14 +676,14 @@ const handleShowChangelog = async () => {
       </div>
       <div class="settings-card">
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">服务地址</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">KuGouMusicApi地址</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">服务地址</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">KuGouMusicApi地址</p>
           </div>
           <input
             :value="isApiFocused ? settingStore.apiBaseUrl : (settingStore.apiBaseUrl ? '*'.repeat(settingStore.apiBaseUrl.length) : '')"
             placeholder="https://example.com"
-            class="w-[140px] sm:w-[280px] shrink-0 h-[44px] px-3 sm:px-4 bg-black/[0.03] dark:bg-white/[0.03] border border-transparent rounded-xl outline-none transition-all font-medium text-[13px] sm:text-[15px] placeholder:opacity-50"
+            class="w-[140px] sm:w-[280px] h-[44px] px-3 sm:px-4 bg-black/[0.03] dark:bg-white/[0.03] border border-transparent rounded-xl outline-none transition-all font-medium text-[13px] sm:text-[15px] placeholder:opacity-50"
             @focus="isApiFocused = true"
             @blur="isApiFocused = false"
             @input="settingStore.apiBaseUrl = ($event.target as HTMLInputElement).value"
@@ -638,19 +691,18 @@ const handleShowChangelog = async () => {
         </div>
         <div class="settings-divider"></div>
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">测试连接</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">验证当前 API 地址是否可达</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">测试连接</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">验证当前 API 地址是否可达</p>
           </div>
           <Button
             variant="outline"
             size="xs"
-            class="settings-button whitespace-nowrap shrink-0"
+            class="settings-button whitespace-nowrap"
             :disabled="isTestingConnection"
             @click="testConnection"
+            >{{ isTestingConnection ? '测试中...' : '测试连接' }}</Button
           >
-            {{ isTestingConnection ? '测试中...' : '测试连接' }}
-          </Button>
         </div>
       </div>
     </section>
@@ -664,71 +716,70 @@ const handleShowChangelog = async () => {
       </div>
       <div class="settings-card">
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">主题模式</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">选择您喜欢的主题外观</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">主题模式</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">选择您喜欢的主题外观</p>
           </div>
           <Select
-            class="w-[110px] sm:w-[180px] shrink-0"
+            class="w-[110px] sm:w-[180px]"
             :model-value="settingStore.theme"
             :options="themeOptions"
             @update:model-value="settingStore.setTheme($event as ThemeMode)"
           />
         </div>
 
-        <div v-if="isGeckoView" class="settings-divider"></div>
+        <div class="settings-divider"></div>
         <div v-if="isGeckoView" class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">屏幕方向</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">选择应用显示方向，重启后生效</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">屏幕方向</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">选择应用显示方向，重启后生效</p>
           </div>
           <Select
-            class="w-[110px] sm:w-[180px] shrink-0"
+            class="w-[110px] sm:w-[180px]"
             :model-value="settingStore.screenOrientation"
             :options="orientationOptions"
-            @update:model-value="settingStore.setScreenOrientation(String($event) as 'auto' | 'landscape' | 'portrait')"
+            @update:model-value="
+              settingStore.setScreenOrientation(String($event) as 'auto' | 'landscape' | 'portrait')
+            "
           />
         </div>
-        
         <div v-if="isGeckoView" class="settings-divider"></div>
         <div v-if="isGeckoView" class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">播放封面样式</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">选择播放页的封面展示效果</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">播放封面样式</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">选择播放页的封面展示效果</p>
           </div>
           <Select
-            class="w-[110px] sm:w-[180px] shrink-0"
+            class="w-[110px] sm:w-[180px]"
             :model-value="settingStore.portraitCoverStyle"
             :options="portraitCoverStyleOptions"
             @update:model-value="settingStore.setPortraitCoverStyle($event as PortraitCoverStyle)"
           />
         </div>
-
-        <div class="settings-divider"></div>
+        <div v-if="isGeckoView" class="settings-divider"></div>
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">主题色来源</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">切歌自动跟随封面，或固定颜色</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">主题色来源</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">切歌自动跟随封面，或固定颜色</p>
           </div>
           <Select
-            class="w-[110px] sm:w-[180px] shrink-0"
+            class="w-[110px] sm:w-[180px]"
             :model-value="themeStore.accentMode"
             :options="accentModeOptions"
             @update:model-value="themeStore.setMode($event as AccentMode)"
           />
         </div>
-
-        <div v-if="themeStore.accentMode === 'preset'" class="settings-item items-start py-2">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">预设主题色</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">挑一个贴合心情的配色</p>
+        <div v-if="themeStore.accentMode === 'preset'" class="settings-item items-start">
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">预设主题色</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">挑一个贴合心情的配色</p>
           </div>
-          <div class="flex gap-2 flex-wrap sm:flex-nowrap justify-end max-w-[50%] shrink-0 pt-1">
+          <div class="flex gap-2 flex-wrap sm:flex-nowrap justify-end max-w-[50%]">
             <button
               v-for="preset in accentPresets"
               :key="preset.id"
               type="button"
-              class="accent-preset-swatch shrink-0"
+              class="accent-preset-swatch"
               :class="{ 'is-active': themeStore.presetId === preset.id }"
               :style="{ backgroundColor: preset.color }"
               :title="preset.name"
@@ -736,41 +787,36 @@ const handleShowChangelog = async () => {
             ></button>
           </div>
         </div>
-
         <div v-if="themeStore.accentMode === 'custom'" class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">自定义主题色</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">从色盘中选一种颜色固定为主题色</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">自定义主题色</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">从色盘中选一种颜色固定为主题色</p>
           </div>
           <button
             type="button"
-            class="settings-color-swatch shrink-0"
+            class="settings-color-swatch flex-shrink-0"
             :style="{ backgroundColor: themeStore.customColor }"
             @click="showAccentPicker = true"
           ></button>
         </div>
-
         <div class="settings-divider"></div>
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">全局主题色</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">关闭后仅播放栏与歌词页跟随主题色</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">全局主题色</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">关闭后仅播放栏与歌词页跟随主题色</p>
           </div>
           <Switch
-            class="shrink-0"
             :model-value="themeStore.globalAccent"
             @update:model-value="themeStore.setGlobalAccent(Boolean($event))"
           />
         </div>
-
         <div class="settings-divider"></div>
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">歌词字色跟随主题</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">已播色自动跟随主题色，手动颜色优先</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">歌词字色跟随主题</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">已播色自动跟随主题色，手动颜色优先</p>
           </div>
           <Switch
-            class="shrink-0"
             :model-value="themeStore.lyricAccentSync"
             @update:model-value="themeStore.setLyricAccentSync(Boolean($event))"
           />
@@ -787,43 +833,41 @@ const handleShowChangelog = async () => {
       </div>
       <div class="settings-card">
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">播放替换队列</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">双击播放单曲时用当前列表替换播放队列</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">播放替换队列</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">双击播放单曲时用当前列表替换播放队列</p>
           </div>
-          <Switch v-model="settingStore.replacePlaylist" class="shrink-0" />
+          <Switch v-model="settingStore.replacePlaylist" />
         </div>
-        
         <div class="settings-divider"></div>
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">语音搜歌</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">选择语音搜索歌曲后的播放方式</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">语音搜歌</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">选择语音搜索歌曲后的播放方式</p>
           </div>
           <Select
-            class="w-[110px] sm:w-[180px] shrink-0"
+            class="w-[110px] sm:w-[180px]"
             :model-value="settingStore.voiceSearchMode"
             :options="voiceSearchModeOptions"
             @update:model-value="settingStore.voiceSearchMode = $event as VoiceSearchMode"
           />
         </div>
-
         <template v-if="!isGeckoView">
           <div class="settings-divider"></div>
           <div class="settings-item">
-            <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-              <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">淡入淡出播放</h3>
-              <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">启用歌曲切换时的过渡效果</p>
+            <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+              <h3 class="font-semibold text-[15px] sm:text-base truncate">淡入淡出播放</h3>
+              <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">启用歌曲切换时的过渡效果</p>
             </div>
-            <Switch v-model="settingStore.volumeFade" class="shrink-0" />
+            <Switch v-model="settingStore.volumeFade" />
           </div>
           <div v-if="settingStore.volumeFade" class="settings-item">
-            <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-              <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">淡入淡出时长</h3>
-              <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">调整歌曲切换时的过渡时长</p>
+            <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+              <h3 class="font-semibold text-[15px] sm:text-base truncate">淡入淡出时长</h3>
+              <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">调整歌曲切换时的过渡时长</p>
             </div>
             <Slider
-              class="w-28 sm:w-48 shrink-0"
+              class="w-28 sm:w-48 flex-shrink-0"
               :model-value="settingStore.volumeFadeTime"
               :min="500"
               :max="3000"
@@ -835,14 +879,19 @@ const handleShowChangelog = async () => {
             />
           </div>
         </template>
-        
         <div class="settings-divider"></div>
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">启动后自动播放</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">打开 APP 时自动恢复上次播放的歌曲和进度</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">启动后自动播放</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">打开 APP 时自动恢复上次播放的歌曲和进度</p>
           </div>
-          <Switch v-model="settingStore.autoPlayOnStart" class="shrink-0" />
+          <Switch
+            :model-value="settingStore.autoPlayOnStart"
+            @update:model-value="(value) => {
+              settingStore.autoPlayOnStart = value;
+              settingStore.$persist();
+            }"
+          />
         </div>
       </div>
     </section>
@@ -856,14 +905,14 @@ const handleShowChangelog = async () => {
       </div>
       <div class="settings-card">
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">默认音质</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">默认音质</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">
               新歌曲默认按此音质解析，播放器中可临时覆盖当前歌曲
             </p>
           </div>
           <Select
-            class="w-[110px] sm:w-[180px] shrink-0"
+            class="w-[110px] sm:w-[180px]"
             :model-value="settingStore.defaultAudioQuality"
             :options="audioQualityOptions"
             @update:model-value="settingStore.defaultAudioQuality = $event as AudioQualityValue"
@@ -871,11 +920,11 @@ const handleShowChangelog = async () => {
         </div>
         <div class="settings-divider"></div>
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">智能兼容模式</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">首选音质不可用时自动尝试备选</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">智能兼容模式</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">首选音质不可用时自动尝试备选</p>
           </div>
-          <Switch v-model="settingStore.compatibilityMode" class="shrink-0" />
+          <Switch v-model="settingStore.compatibilityMode" />
         </div>
       </div>
     </section>
@@ -889,28 +938,28 @@ const handleShowChangelog = async () => {
       </div>
       <div class="settings-card">
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">显示翻译</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">有翻译时在歌词页面中显示翻译行</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">显示翻译</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">有翻译时在歌词页面中显示翻译行</p>
           </div>
-          <Switch v-model="lyricStore.wantTranslation" class="shrink-0" />
+          <Switch v-model="lyricStore.wantTranslation" />
         </div>
         <div class="settings-divider"></div>
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">显示音译</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">有音译时在歌词页面中显示音译行</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">显示音译</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">有音译时在歌词页面中显示音译行</p>
           </div>
-          <Switch v-model="lyricStore.wantRomanization" class="shrink-0" />
+          <Switch v-model="lyricStore.wantRomanization" />
         </div>
         <div class="settings-divider"></div>
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">字体大小</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">调整歌词页面的文字大小</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">字体大小</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">调整歌词页面的文字大小</p>
           </div>
           <Slider
-            class="w-28 sm:w-48 shrink-0"
+            class="w-28 sm:w-48 flex-shrink-0"
             :model-value="lyricStore.fontScale"
             :min="0.7"
             :max="1.4"
@@ -923,11 +972,13 @@ const handleShowChangelog = async () => {
         </div>
         <div class="settings-divider"></div>
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">歌手写真背景</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">优先使用歌手写真作为背景</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">歌手写真背景</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">
+              优先使用歌手写真作为背景
+            </p>
           </div>
-          <Switch v-model="settingStore.lyricArtistBackdrop" class="shrink-0" />
+          <Switch v-model="settingStore.lyricArtistBackdrop" />
         </div>
       </div>
     </section>
@@ -941,12 +992,14 @@ const handleShowChangelog = async () => {
       </div>
       <div class="settings-card">
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">缓存大小限制</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">超出限制后自动删除最久未播放的缓存（单位：MB）</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">缓存大小限制</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">
+              超出限制后自动删除最久未播放的缓存（单位：MB）
+            </p>
           </div>
           <InputNumber
-            class="w-[110px] sm:w-[140px] shrink-0"
+            class="w-[110px] sm:w-[140px]"
             :model-value="settingStore.cacheSizeLimitMb"
             :min="100"
             :max="10240"
@@ -956,14 +1009,16 @@ const handleShowChangelog = async () => {
         </div>
         <div class="settings-divider"></div>
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">当前缓存用量</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">{{ cacheUsageText }}</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">当前缓存用量</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">
+              {{ cacheUsageText }}
+            </p>
           </div>
           <Button
             variant="outline"
             size="xs"
-            class="settings-button whitespace-nowrap shrink-0"
+            class="settings-button whitespace-nowrap"
             @click="handleClearCache"
           >清除缓存</Button>
         </div>
@@ -979,40 +1034,42 @@ const handleShowChangelog = async () => {
       </div>
       <div class="settings-card">
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">开启桌面歌词</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">在其他应用上层显示悬浮歌词窗口</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">开启桌面歌词</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">在其他应用上层显示悬浮歌词窗口</p>
           </div>
           <Switch
-            class="shrink-0"
             :model-value="androidLyricEnabled"
             @update:model-value="handleAndroidLyricToggle($event)"
           />
         </div>
         <div class="settings-divider"></div>
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">歌词行数</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">选择显示单行或双行歌词</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">歌词行数</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">选择显示单行或双行歌词</p>
           </div>
           <Select
-            class="w-[110px] sm:w-[180px] shrink-0"
+            class="w-[110px] sm:w-[180px]"
             :model-value="androidLyricDoubleLine ? 'double' : 'single'"
             :options="[
               { label: '单行歌词', value: 'single' },
               { label: '双行歌词', value: 'double' },
             ]"
-            @update:model-value="androidLyricDoubleLine = $event === 'double'; handleAndroidLyricSettingChange();"
+            @update:model-value="
+              androidLyricDoubleLine = $event === 'double';
+              handleAndroidLyricSettingChange();
+            "
           />
         </div>
         <div class="settings-divider"></div>
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">字体大小</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">调整桌面歌词的文字大小</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">字体大小</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">调整桌面歌词的文字大小</p>
           </div>
           <Slider
-            class="w-28 sm:w-48 shrink-0"
+            class="w-28 sm:w-48 flex-shrink-0"
             :model-value="androidLyricFontSize"
             :min="5"
             :max="36"
@@ -1020,17 +1077,20 @@ const handleShowChangelog = async () => {
             show-value
             :value-suffix="'sp'"
             @update:model-value="androidLyricFontSize = $event"
-            @value-commit="androidLyricFontSize = $event; handleAndroidLyricSettingChange();"
+            @value-commit="
+              androidLyricFontSize = $event;
+              handleAndroidLyricSettingChange();
+            "
           />
         </div>
         <div class="settings-divider"></div>
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">歌词条宽度</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">调整桌面歌词条的水平宽度</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">歌词条宽度</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">调整桌面歌词条的水平宽度</p>
           </div>
           <Slider
-            class="w-28 sm:w-48 shrink-0"
+            class="w-28 sm:w-48 flex-shrink-0"
             :model-value="androidLyricWidthPercent"
             :min="1"
             :max="100"
@@ -1043,76 +1103,91 @@ const handleShowChangelog = async () => {
         </div>
         <div class="settings-divider"></div>
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">文字描边</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">为歌词添加黑色描边，背景复杂时更清晰</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">文字描边</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">为歌词添加黑色描边，背景复杂时更清晰</p>
           </div>
           <Switch
-            class="shrink-0"
             :model-value="androidLyricStrokeEnabled"
-            @update:model-value="androidLyricStrokeEnabled = $event; handleAndroidLyricSettingChange();"
+            @update:model-value="
+              androidLyricStrokeEnabled = $event;
+              handleAndroidLyricSettingChange();
+            "
           />
         </div>
         <div class="settings-divider"></div>
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">对齐方式</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">设置歌词文字的水平对齐方向</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">对齐方式</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">设置歌词文字的水平对齐方向</p>
           </div>
           <Select
-            class="w-[110px] sm:w-[180px] shrink-0"
+            class="w-[110px] sm:w-[180px]"
             :model-value="androidLyricAlignment"
             :options="[
               { label: '左对齐', value: 'left' },
               { label: '居中', value: 'center' },
               { label: '右对齐', value: 'right' },
             ]"
-            @update:model-value="androidLyricAlignment = String($event); handleAndroidLyricSettingChange();"
+            @update:model-value="
+              androidLyricAlignment = String($event);
+              handleAndroidLyricSettingChange();
+            "
           />
         </div>
         <div class="settings-divider"></div>
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">锁定歌词</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">锁定后背景变透明且不可拖动</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">锁定歌词</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">
+              锁定后背景变透明且不可拖动
+            </p>
           </div>
           <Switch
-            class="shrink-0"
             :model-value="androidLyricLocked"
-            @update:model-value="androidLyricLocked = $event; handleAndroidLyricSettingChange();"
+            @update:model-value="
+              androidLyricLocked = $event;
+              handleAndroidLyricSettingChange();
+            "
           />
         </div>
         <div class="settings-divider"></div>
-        <div class="settings-item items-start py-2">
-          <div class="w-full flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center">
-            <p class="text-[14px] font-semibold text-text-secondary mb-2 whitespace-normal break-words">浅色主题颜色</p>
-            <div class="flex gap-2 flex-wrap pt-1">
+        <div class="settings-item items-start">
+          <div class="space-y-2 w-full flex-1 min-w-0 pr-2 sm:pr-4">
+            <p class="text-[13px] font-semibold text-text-secondary">浅色主题颜色</p>
+            <div class="flex gap-2 flex-wrap">
               <button
                 v-for="c in androidLyricLightColors"
                 :key="'light-' + c.value"
                 type="button"
-                class="android-lyric-color-swatch shrink-0"
+                class="android-lyric-color-swatch"
                 :class="{ 'is-active': androidLyricLightColorIndex === c.value }"
                 :style="{ backgroundColor: c.hex, border: c.hex === '#FFFFFF' ? '1px solid #ccc' : 'none' }"
                 :title="c.label"
-                @click="androidLyricLightColorIndex = c.value; handleAndroidLyricSettingChange();"
+                @click="
+                  androidLyricLightColorIndex = c.value;
+                  handleAndroidLyricSettingChange();
+                "
               ></button>
             </div>
           </div>
         </div>
-        <div class="settings-item items-start py-2">
-          <div class="w-full flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center">
-            <p class="text-[14px] font-semibold text-text-secondary mb-2 whitespace-normal break-words">深色主题颜色</p>
-            <div class="flex gap-2 flex-wrap pt-1">
+        <div class="settings-item items-start">
+          <div class="space-y-2 w-full flex-1 min-w-0 pr-2 sm:pr-4">
+            <p class="text-[13px] font-semibold text-text-secondary">深色主题颜色</p>
+            <div class="flex gap-2 flex-wrap">
               <button
                 v-for="c in androidLyricDarkColors"
                 :key="'dark-' + c.value"
                 type="button"
-                class="android-lyric-color-swatch shrink-0"
+                class="android-lyric-color-swatch"
                 :class="{ 'is-active': androidLyricDarkColorIndex === c.value }"
                 :style="{ backgroundColor: c.hex, border: c.hex === '#000000' ? '1px solid #666' : 'none' }"
                 :title="c.label"
-                @click="androidLyricDarkColorIndex = c.value; handleAndroidLyricSettingChange();"
+                @click="
+                  androidLyricDarkColorIndex = c.value;
+                  handleAndroidLyricSettingChange();
+                "
               ></button>
             </div>
           </div>
@@ -1125,19 +1200,21 @@ const handleShowChangelog = async () => {
         <div class="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
           <Icon :icon="iconInfo" width="18" height="18" />
         </div>
-        <h2 class="text-lg font-bold">关于 易格音乐</h2>
+        <h2 class="text-lg font-bold">
+          {{ isGeckoView ? '关于 易格音乐' : '关于 易格音乐' }}
+        </h2>
       </div>
       <div class="settings-card">
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">当前版本</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">{{ aboutVersionText }}</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">当前版本</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">{{ aboutVersionText }}</p>
           </div>
-          <div class="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+          <div class="flex items-center gap-2">
             <Button
               variant="ghost"
               size="xs"
-              class="text-text-secondary text-sm font-semibold whitespace-nowrap shrink-0"
+              class="text-text-secondary text-sm font-semibold whitespace-nowrap"
               :disabled="isCheckingUpdate"
               @click="checkForUpdates"
             >
@@ -1147,21 +1224,22 @@ const handleShowChangelog = async () => {
               v-if="!isGeckoView"
               variant="ghost"
               size="xs"
-              class="text-text-secondary text-sm font-semibold whitespace-nowrap shrink-0"
+              class="text-text-secondary text-sm font-semibold whitespace-nowrap"
               @click="handleShowChangelog"
-            >更新日志</Button>
+              >更新日志</Button
+            >
           </div>
         </div>
         <div class="settings-divider"></div>
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">原项目地址</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">EchoMusic</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">原项目地址</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">EchoMusic</p>
           </div>
           <Button
             variant="ghost"
             size="xs"
-            class="text-text-secondary h-10 w-10 min-w-0 p-0 shrink-0"
+            class="text-text-secondary h-10 w-10 min-w-0 p-0 flex-shrink-0"
             @click="handleOpenExternalUrl('https://github.com/hoowhoami/EchoMusic')"
           >
             <Icon :icon="iconExternalLink" width="20" height="20" />
@@ -1169,14 +1247,14 @@ const handleShowChangelog = async () => {
         </div>
         <div class="settings-divider"></div>
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">此项目地址</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">E-cells-Music</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">此项目地址</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">E-cells-Music</p>
           </div>
           <Button
             variant="ghost"
             size="xs"
-            class="text-text-secondary h-10 w-10 min-w-0 p-0 shrink-0"
+            class="text-text-secondary h-10 w-10 min-w-0 p-0 flex-shrink-0"
             @click="handleOpenExternalUrl('https://github.com/e-cells/E-cells-Music')"
           >
             <Icon :icon="iconExternalLink" width="20" height="20" />
@@ -1184,9 +1262,9 @@ const handleShowChangelog = async () => {
         </div>
         <div class="settings-divider"></div>
         <div class="settings-item">
-          <div class="flex-1 min-w-0 pr-2 sm:pr-4 flex flex-col justify-center py-2">
-            <h3 class="font-semibold text-[15px] sm:text-base leading-snug break-words whitespace-normal">WebView 内核</h3>
-            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed mt-1 break-words whitespace-normal">{{ webviewEngineInfo }}</p>
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">WebView 内核</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">{{ webviewEngineInfo }}</p>
           </div>
         </div>
       </div>
@@ -1198,12 +1276,12 @@ const handleShowChangelog = async () => {
       description="此操作将移除所有持久化设置与缓存，无法撤销。"
     >
       <template #footer>
-        <Button class="settings-button shrink-0" variant="outline" size="sm" @click="showConfirmClear = false">取消</Button>
-        <Button class="settings-button danger shrink-0" variant="danger" size="sm" @click="settingStore.clearAppData(); showConfirmClear = false;">确认清除</Button>
+        <Button class="settings-button" variant="outline" size="sm" @click="showConfirmClear = false">取消</Button>
+        <Button class="settings-button danger" variant="danger" size="sm" @click="settingStore.clearAppData(); showConfirmClear = false;">确认清除</Button>
       </template>
     </Dialog>
     
-    <Dialog v-model:open="showChangelog" :title="`更新日志`" showClose noScroll :content-style="{ width: '90vw', maxWidth: '520px' }">
+    <Dialog v-model:open="showChangelog" :title="`更新日志`" showClose noScroll :content-style="{ width: '520px' }">
       <Scrollbar class="settings-update-changelog" :content-props="{ class: 'px-4 py-3' }">
         <div class="changelog-content" v-html="changelogHtml"></div>
       </Scrollbar>
@@ -1212,12 +1290,12 @@ const handleShowChangelog = async () => {
       </template>
     </Dialog>
 
-    <Dialog v-model:open="showUpdateDialog" title="发现新版本" showClose noScroll :content-style="{ width: '90vw', maxWidth: '420px' }">
+    <Dialog v-model:open="showUpdateDialog" title="发现新版本" showClose noScroll :content-style="{ width: '420px' }">
       <div class="px-4 py-3 space-y-4">
-        <p class="text-[14px] text-text-main break-words whitespace-normal">
+        <p class="text-[14px] text-text-main">
           检测到新版本 <span class="font-bold text-primary">{{ latestVersionInfo.version }}</span>，当前版本为 {{ currentAppVersion }}。
         </p>
-        <div class="text-[13px] text-text-secondary bg-black/5 dark:bg-white/5 p-3 rounded-lg max-h-[200px] overflow-y-auto whitespace-pre-wrap break-words">
+        <div class="text-[13px] text-text-secondary bg-black/5 dark:bg-white/5 p-3 rounded-lg max-h-[200px] overflow-y-auto whitespace-pre-wrap">
           {{ latestVersionInfo.releaseNotes }}
         </div>
         <div v-if="isGeckoView && latestVersionInfo.apkDownloadUrl && updateDownloadStatus !== 'idle'" class="space-y-2">
@@ -1228,26 +1306,26 @@ const handleShowChangelog = async () => {
                    :style="{ width: `${updateDownloadPercent}%` }"></div>
             </div>
           </div>
-          <p v-else-if="updateDownloadStatus === 'error'" class="text-xs text-red-500 break-words whitespace-normal">
+          <p v-else-if="updateDownloadStatus === 'error'" class="text-xs text-red-500">
             下载失败：{{ updateDownloadError }}
           </p>
-          <p v-else-if="updateDownloadStatus === 'downloaded'" class="text-xs text-green-500 break-words whitespace-normal">
+          <p v-else-if="updateDownloadStatus === 'downloaded'" class="text-xs text-green-500">
             下载完成，点击「立即安装」安装新版本
           </p>
         </div>
       </div>
       <template #footer>
-        <Button class="settings-button shrink-0" variant="outline" size="sm" @click="showUpdateDialog = false">稍后更新</Button>
+        <Button class="settings-button" variant="outline" size="sm" @click="showUpdateDialog = false">稍后更新</Button>
         <Button v-if="isGeckoView && latestVersionInfo.apkDownloadUrl && updateDownloadStatus === 'downloaded'"
-                class="settings-button shrink-0" style="background-color: var(--color-primary); color: #fff;"
+                class="settings-button" style="background-color: var(--color-primary); color: #fff;"
                 size="sm" @click="handleUpdateInstall">立即安装</Button>
         <Button v-else-if="isGeckoView && latestVersionInfo.apkDownloadUrl && updateDownloadStatus === 'downloading'"
-                class="settings-button shrink-0" variant="secondary" size="sm" disabled>下载中...</Button>
+                class="settings-button" variant="secondary" size="sm" disabled>下载中...</Button>
         <Button v-else-if="isGeckoView && latestVersionInfo.apkDownloadUrl"
-                class="settings-button shrink-0" style="background-color: var(--color-primary); color: #fff;"
+                class="settings-button" style="background-color: var(--color-primary); color: #fff;"
                 size="sm" @click="handleUpdateDownload">立即更新</Button>
         <Button v-else
-                class="settings-button shrink-0" style="background-color: var(--color-primary); color: #fff;"
+                class="settings-button" style="background-color: var(--color-primary); color: #fff;"
                 size="sm" @click="goToReleasePage">前往下载</Button>
       </template>
     </Dialog>
@@ -1284,7 +1362,7 @@ const handleShowChangelog = async () => {
 }
 
 .settings-item {
-  @apply flex items-center justify-between gap-3 sm:gap-6 min-h-[44px];
+  @apply flex items-center justify-between gap-3 sm:gap-6;
 }
 
 .settings-divider {
@@ -1398,5 +1476,3 @@ const handleShowChangelog = async () => {
   to { opacity: 1; transform: translateY(0); }
 }
 </style>
-
-```

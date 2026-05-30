@@ -38,6 +38,7 @@ import android.widget.TextView;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -68,7 +69,7 @@ public class LyricOverlayService extends Service {
         }
     }
 
-    private static LyricOverlayService instance;
+    private static WeakReference<LyricOverlayService> instanceRef;
 
     public interface OnSettingsChangedListener {
         void onLockChanged(boolean locked);
@@ -81,7 +82,7 @@ public class LyricOverlayService extends Service {
     }
 
     public static LyricOverlayService getInstance() {
-        return instance;
+        return instanceRef != null ? instanceRef.get() : null;
     }
 
     private WindowManager windowManager;
@@ -132,7 +133,7 @@ public class LyricOverlayService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
-        instance = this;
+        instanceRef = new WeakReference<>(this);
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
 
@@ -241,7 +242,8 @@ public class LyricOverlayService extends Service {
             }
             screenReceiver = null;
         }
-        instance = null;
+        settingsChangedListener = null;
+        instanceRef = null;
         super.onDestroy();
         Log.i(TAG, "LyricOverlayService destroyed");
     }
@@ -431,6 +433,7 @@ public class LyricOverlayService extends Service {
     private void startNativeLyricTimer() {
         stopNativeLyricTimer();
         if (!isPlaying || lyrics.isEmpty()) return;
+        final int[] lastPairStart = { getDisplayPairStart() };
         lyricTimerRunnable = new Runnable() {
             @Override
             public void run() {
@@ -439,7 +442,16 @@ public class LyricOverlayService extends Service {
                     int newIndex = findLineIndex(pos);
                     if (newIndex != currentLineIndex) {
                         currentLineIndex = newIndex;
-                        updateOverlayFromLyrics();
+                        if (doubleLine) {
+                            // 双行模式：仅在 pairStart 变化时才刷新显示
+                            int newPairStart = getDisplayPairStart();
+                            if (newPairStart != lastPairStart[0]) {
+                                lastPairStart[0] = newPairStart;
+                                updateOverlayFromLyrics();
+                            }
+                        } else {
+                            updateOverlayFromLyrics();
+                        }
                     }
                 }
                 if (isPlaying) {
@@ -454,9 +466,17 @@ public class LyricOverlayService extends Service {
      * Compute adaptive polling delay based on time until next lyric line.
      * Long gaps between lines → longer delay (saves battery).
      * Approaching a line change → shorter delay (accuracy).
+     *
+     * 双行模式下，关注下一个 pair 边界（pairStart + 2）而非下一行。
      */
     private long computeLyricPollDelay() {
-        int nextIdx = currentLineIndex + 1;
+        int nextIdx;
+        if (doubleLine && currentLineIndex >= 0) {
+            // 双行模式：下一个关键时间点是 pairStart + 2 那行的起始时间
+            nextIdx = getDisplayPairStart() + 2;
+        } else {
+            nextIdx = currentLineIndex + 1;
+        }
         if (nextIdx >= lyrics.size()) {
             return 2000; // Last line, no more changes expected
         }
@@ -478,6 +498,17 @@ public class LyricOverlayService extends Service {
         }
     }
 
+    /**
+     * 计算双行模式下当前应显示的 pair 起始索引。
+     * 双行成对推进：歌手唱完第 N+1 行后才切换到 (N+2, N+3)。
+     */
+    private int getDisplayPairStart() {
+        if (doubleLine && currentLineIndex >= 0) {
+            return (currentLineIndex / 2) * 2;
+        }
+        return currentLineIndex;
+    }
+
     private void updateOverlayFromLyrics() {
         if (line1 == null) return;
         if (currentLineIndex < 0 || currentLineIndex >= lyrics.size()) {
@@ -485,16 +516,35 @@ public class LyricOverlayService extends Service {
             line2.setText("");
             return;
         }
-        LyricLineData current = lyrics.get(currentLineIndex);
-        line1.setText(current.text);
-        // Second line: next lyric's text, or current translation
-        String line2Text = "";
-        if (current.translation != null && !current.translation.isEmpty()) {
-            line2Text = current.translation;
-        } else if (currentLineIndex + 1 < lyrics.size()) {
-            line2Text = lyrics.get(currentLineIndex + 1).text;
+
+        if (doubleLine) {
+            // 双行成对模式：使用 pairStart 决定显示哪两行
+            int pairStart = getDisplayPairStart();
+            if (pairStart < 0 || pairStart >= lyrics.size()) {
+                line1.setText("");
+                line2.setText("");
+                return;
+            }
+            LyricLineData first = lyrics.get(pairStart);
+            line1.setText(first.text);
+            String line2Text = "";
+            if (pairStart + 1 < lyrics.size()) {
+                LyricLineData second = lyrics.get(pairStart + 1);
+                line2Text = second.text;
+            }
+            line2.setText(line2Text);
+        } else {
+            // 单行模式：保持原逻辑
+            LyricLineData current = lyrics.get(currentLineIndex);
+            line1.setText(current.text);
+            String line2Text = "";
+            if (current.translation != null && !current.translation.isEmpty()) {
+                line2Text = current.translation;
+            } else if (currentLineIndex + 1 < lyrics.size()) {
+                line2Text = lyrics.get(currentLineIndex + 1).text;
+            }
+            line2.setText(line2Text);
         }
-        line2.setText(line2Text);
         line1.setSelected(true);
         line2.setSelected(true);
     }
@@ -732,11 +782,11 @@ public class LyricOverlayService extends Service {
                 }
                 // Stop self if conditions no longer met, otherwise continue
                 if ("system".equals(themeMode) && isScreenOn) {
-                    handler.postDelayed(this, 30000);
+                    handler.postDelayed(this, 120000);
                 }
             }
         };
-        handler.postDelayed(themePollRunnable, 30000);
+        handler.postDelayed(themePollRunnable, 120000);
     }
 
     private void stopThemePolling() {

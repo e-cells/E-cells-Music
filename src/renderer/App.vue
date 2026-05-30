@@ -121,8 +121,8 @@ watch(
 const handleVisibilityChange = () => {
   document.documentElement.classList.toggle('document-hidden', document.hidden);
   if (document.hidden) {
-    try { settings.$persist(); } catch {}
-    try { player.$persist(); } catch {}
+    // 使用全局持久化函数，确保所有 Pinia store 状态立即写入 localStorage
+    try { (window as any).__persistAllStores?.(); } catch {}
   }
 };
 document.addEventListener('visibilitychange', handleVisibilityChange);

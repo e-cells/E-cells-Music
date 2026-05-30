@@ -84,6 +84,13 @@ const currentIndex = computed(() => {
   }
   return idx;
 });
+/** 双行模式成对显示：只有当歌手进入新的一对时才切换 */
+const displayStartIndex = computed(() => {
+  if (doubleLine.value && currentIndex.value >= 0) {
+    return Math.floor(currentIndex.value / 2) * 2;
+  }
+  return currentIndex.value;
+});
 const isPlaying = computed(() => playback.value?.isPlaying ?? false);
 const songName = computed(() => playback.value?.title || 'EchoMusic');
 const artistName = computed(() => playback.value?.artist || '');
@@ -213,17 +220,15 @@ const renderLyricLines = computed<RenderLine[]>(() => {
   if (idx < 0) {
     return placeholder(`${songName.value} - ${artistName.value}`);
   }
-  const current = lines[idx];
-  if (!current) return [];
-  const next = lines[idx + 1];
 
-  // 计算安全结束时间
-  const safeEnd = next
-    ? (next.characters?.[0]?.startTime ?? next.time * 1000)
-    : (current.characters?.[current.characters.length - 1]?.endTime ?? 0);
-
-  // 翻译模式
+  // 翻译模式：显示原文+翻译（同行配对），使用 currentIndex
   if (secondaryEnabled.value && hasSecondary.value) {
+    const current = lines[idx];
+    if (!current) return [];
+    const next = lines[idx + 1];
+    const safeEnd = next
+      ? (next.characters?.[0]?.startTime ?? next.time * 1000)
+      : (current.characters?.[current.characters.length - 1]?.endTime ?? 0);
     const tran = current.translated?.trim() ?? '';
     const roman = current.romanized?.trim() ?? '';
     const mode = lyricsMode.value;
@@ -264,18 +269,24 @@ const renderLyricLines = computed<RenderLine[]>(() => {
       ];
     }
   }
-  // 双行模式：当前 + 下一句
+
+  // 双行模式：成对显示，使用 displayStartIndex
+  const displayIdx = displayStartIndex.value;
+  const current = lines[displayIdx];
+  if (!current) return [];
+  const next = lines[displayIdx + 1];
+
   if (doubleLine.value) {
-    const result: RenderLine[] = [{ line: current, index: idx, key: `${idx}-orig`, active: true }];
+    const result: RenderLine[] = [{ line: current, index: displayIdx, key: `${displayIdx}-orig`, active: true }];
     if (next) {
-      result.push({ line: next, index: idx + 1, key: `${idx + 1}-orig`, active: false });
+      result.push({ line: next, index: displayIdx + 1, key: `${displayIdx + 1}-orig`, active: false });
     }
     return result;
   }
   // 单行模式：也预渲染下一句（视觉隐藏），切换时走 move 动画而非 enter/leave
-  const result: RenderLine[] = [{ line: current, index: idx, key: `${idx}-orig`, active: true }];
+  const result: RenderLine[] = [{ line: current, index: displayIdx, key: `${displayIdx}-orig`, active: true }];
   if (next) {
-    result.push({ line: next, index: idx + 1, key: `${idx + 1}-orig`, active: false });
+    result.push({ line: next, index: displayIdx + 1, key: `${displayIdx + 1}-orig`, active: false });
   }
   return result;
 });

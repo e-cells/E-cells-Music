@@ -272,14 +272,9 @@ export const usePlayerStore = defineStore(
           state.seekTargetTime = null;
           state.currentTime = currentTime;
           lastTimeUpdateAt = Date.now();
-          // Skip expensive bridge calls when app is in background (screen off / tab hidden)
-          if (document.hidden) return;
           const now = Date.now();
-          if (now - lastHistoryCheck >= HISTORY_CHECK_MS) {
-            state.lastPlayTime = currentTime;
-            lastHistoryCheck = now;
-            void historyManager.commitListeningHistory();
-          }
+
+          // MediaSession 同步 — 始终执行（后台也需要，保持方向盘按键响应）
           if (now - lastMediaSessionSync >= MEDIA_SESSION_SYNC_MS) {
             const posDelta = Math.abs(state.currentTime - lastSyncedPosition);
             if (posDelta >= 1.0 || lastSyncedPosition < 0) {
@@ -287,6 +282,14 @@ export const usePlayerStore = defineStore(
               lastSyncedPosition = state.currentTime;
               engine.updateMediaPlaybackState(buildMediaState(state));
             }
+          }
+
+          // 以下操作在后台时跳过（避免不必要的网络请求）
+          if (document.hidden) return;
+          if (now - lastHistoryCheck >= HISTORY_CHECK_MS) {
+            state.lastPlayTime = currentTime;
+            lastHistoryCheck = now;
+            void historyManager.commitListeningHistory();
           }
         },
         durationChange: (duration) => {
@@ -383,7 +386,10 @@ export const usePlayerStore = defineStore(
           // Fallback to persisted snapshot when playlist is empty on restart
           if (!track && state.currentTrackSnapshot) {
             track = state.currentTrackSnapshot;
-            list = [track];
+            // 仅当列表确实为空时才设为单曲，否则保留原列表供 next()/prev() 使用
+            if (!list || list.length === 0) {
+              list = [track];
+            }
           }
           if (track && isPlayableSong(track)) {
             const savedTime = state.lastPlayTime > 0 ? state.lastPlayTime : undefined;

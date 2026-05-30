@@ -216,12 +216,34 @@ public class MainActivity extends AppCompatActivity {
 
             session.setProgressDelegate(new GeckoSession.ProgressDelegate() {
                 @Override
-                public void onPageStart(GeckoSession progSession, String url) {}
+                public void onPageStart(GeckoSession progSession, String url) {
+                    // === 页面开始加载时，从 SharedPreferences 恢复 store 数据到 localStorage ===
+                    // 此时 JS 还未执行，localStorage 写入会在 Pinia rehydrate 之前生效
+                    try {
+                        android.content.SharedPreferences sp = getSharedPreferences("pinia_stores", Context.MODE_PRIVATE);
+                        java.util.Map<String, ?> all = sp.getAll();
+                        if (!all.isEmpty()) {
+                            StringBuilder sb = new StringBuilder("try{");
+                            for (java.util.Map.Entry<String, ?> entry : all.entrySet()) {
+                                String key = entry.getKey();
+                                String val = String.valueOf(entry.getValue());
+                                String escaped = val.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "");
+                                sb.append("localStorage.setItem('").append(key).append("','").append(escaped).append("');");
+                            }
+                            sb.append("}catch(e){}");
+                            evalJs(sb.toString());
+                        }
+                    } catch (Exception e) {
+                        Log.w("MainActivity", "Failed to restore SharedPreferences to localStorage", e);
+                    }
+                    // 提前启用原生持久化桥，防止 onPageStop success=false 时桥未启用导致设置丢失
+                    evalJs("window.__persistToNativeReady=true;");
+                }
 
                 @Override
                 public void onPageStop(GeckoSession progSession, boolean success) {
                     if (success) {
-                        evalJs("window.__GECKOVIEW__=true;window.NativeBridge=window.NativeBridge||{_callbacks:{},_listeners:{}};");
+                        evalJs("window.__GECKOVIEW__=true;window.__persistToNativeReady=true;window.NativeBridge=window.NativeBridge||{_callbacks:{},_listeners:{}};");
                         evalJs("if(window.__pendingVoiceSearch&&window.NativeBridge._listeners['mediaButtonPlayFromSearch']){" +
                             "var q=window.__pendingVoiceSearch;delete window.__pendingVoiceSearch;" +
                             "window.NativeBridge._listeners['mediaButtonPlayFromSearch'].forEach(function(cb){cb(q);});}");
@@ -368,6 +390,11 @@ public class MainActivity extends AppCompatActivity {
         super.onPause();
         if ("sensor".equals(themeAutoMode)) {
             unregisterLightSensor();
+        }
+        // Activity 进入后台时，直接从原生层内存缓存同步写盘，
+        // 不依赖 JS evalJs 异步调用，确保进程被 kill 前数据已落盘。
+        if (audioPlugin != null) {
+            audioPlugin.persistAllCachedStores();
         }
         evalJs("if(window.NativeBridge&&window.NativeBridge._listeners['onActivityPause']){window.NativeBridge._listeners['onActivityPause'].forEach(function(cb){cb();});}");
     }

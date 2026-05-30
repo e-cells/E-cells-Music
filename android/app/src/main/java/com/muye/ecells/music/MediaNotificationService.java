@@ -32,6 +32,7 @@ import androidx.media.MediaBrowserServiceCompat;
 
 import java.io.InputStream;
 import java.io.ByteArrayOutputStream;
+import java.lang.ref.WeakReference;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
@@ -50,7 +51,7 @@ public class MediaNotificationService extends MediaBrowserServiceCompat {
     public static final String ACTION_NEXT = "com.muye.ecells.music.NEXT";
     public static final String ACTION_PREV = "com.muye.ecells.music.PREV";
 
-    private static MediaNotificationService instance;
+    private static WeakReference<MediaNotificationService> instanceRef;
     private static MainActivity pendingActivity;
 
     private MediaSessionCompat mediaSession;
@@ -86,7 +87,7 @@ public class MediaNotificationService extends MediaBrowserServiceCompat {
     @Override
     public void onCreate() {
         super.onCreate();
-        instance = this;
+        instanceRef = new WeakReference<>(this);
         if (pendingActivity != null) {
             this.activity = pendingActivity;
             pendingActivity = null;
@@ -110,7 +111,7 @@ public class MediaNotificationService extends MediaBrowserServiceCompat {
     }
 
     public static MediaNotificationService getInstance() {
-        return instance;
+        return instanceRef != null ? instanceRef.get() : null;
     }
 
     public static void setPendingActivity(MainActivity act) {
@@ -182,7 +183,7 @@ public class MediaNotificationService extends MediaBrowserServiceCompat {
                 MediaButtonReceiver.handleIntent(mediaSession, intent);
             }
         }
-        return START_NOT_STICKY;
+        return START_STICKY;
     }
 
     @Nullable
@@ -193,7 +194,7 @@ public class MediaNotificationService extends MediaBrowserServiceCompat {
 
     @Override
     public void onDestroy() {
-        instance = null;
+        instanceRef = null;
         abandonAudioFocus();
         if (mediaSession != null) {
             mediaSession.setActive(false);

@@ -318,6 +318,16 @@ export class WebAudioEffectEngine {
     this.currentAudioElement = null;
   }
 
+  /** 完全销毁引擎，关闭 AudioContext 并释放所有资源 */
+  destroy(): void {
+    this.disconnect();
+    if (this.audioCtx && this.audioCtx.state !== 'closed') {
+      try { this.audioCtx.close(); } catch { /* ignore */ }
+    }
+    this.audioCtx = null;
+    this.reverbIR = null;
+  }
+
   async resume(): Promise<void> {
     if (this.audioCtx && this.audioCtx.state === 'suspended') {
       try {

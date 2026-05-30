@@ -24,6 +24,7 @@ import android.util.Log;
 
 import java.io.IOException;
 import java.io.File;
+import java.lang.ref.WeakReference;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.List;
@@ -34,7 +35,7 @@ public class NativeAudioPlugin {
 
     private static final String TAG = "NativeAudio";
 
-    private final MainActivity activity;
+    private final WeakReference<MainActivity> activityRef;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private MediaPlayer mediaPlayer;
     private boolean isPrepared = false;
@@ -45,6 +46,9 @@ public class NativeAudioPlugin {
     private boolean playingFromCache = false;
     private int lastKnownPositionMs = 0;
 
+    // 缓存所有 Pinia store 的最新数据，供 onPause 时直接同步写盘
+    private final Map<String, String> storeCache = new HashMap<>();
+
     // AudioFX
     private Equalizer equalizer;
     private BassBoost bassBoost;
@@ -54,12 +58,19 @@ public class NativeAudioPlugin {
     private int[] eqCenterFreqs;
 
     public NativeAudioPlugin(MainActivity activity, Object session) {
-        this.activity = activity;
+        this.activityRef = new WeakReference<>(activity);
 
         // Listen for lock state changes from LyricOverlayService and forward to JS
         LyricOverlayService.setOnSettingsChangedListener((locked) -> {
             emitEvent("lyricLockChanged", "{\"locked\":" + locked + "}");
         });
+    }
+
+    /** 获取 Activity 引用，如果已被回收则返回 null */
+    private MainActivity getActivity() {
+        MainActivity a = activityRef.get();
+        if (a != null && !a.isDestroyed()) return a;
+        return null;
     }
 
     public void handleUri(String uriString) {
@@ -176,6 +187,11 @@ public class NativeAudioPlugin {
     // ── Synchronous handler for PromptDelegate bridge ──
 
     public String handleUriSync(final String uriString) {
+        // persistStore 直接执行，不经过主线程调度
+        // GeckoView PromptDelegate 在非主线程执行，handler.post + CountDownLatch 会超时导致数据丢失
+        if (uriString.startsWith("native://persistStore")) {
+            return processPersistStoreSync(uriString);
+        }
         // Must run on UI thread for Activity/Service access
         if (Looper.myLooper() == Looper.getMainLooper()) {
             return processUriSync(uriString);
@@ -196,6 +212,20 @@ public class NativeAudioPlugin {
             return "{\"__nativeError\":\"Operation interrupted\"}";
         }
         return result[0];
+    }
+
+    // persistStore 专用处理：不依赖主线程调度，直接在调用线程同步写盘
+    private String processPersistStoreSync(String uriString) {
+        try {
+            Uri uri = Uri.parse(uriString);
+            Map<String, String> params = new HashMap<>();
+            for (String key : uri.getQueryParameterNames()) {
+                params.put(key, uri.getQueryParameter(key));
+            }
+            return onPersistStoreSync(params);
+        } catch (Exception e) {
+            return "{\"__nativeError\":\"" + e.getMessage().replace("\"", "'") + "\"}";
+        }
     }
 
     private String processUriSync(String uriString) {
@@ -263,6 +293,8 @@ public class NativeAudioPlugin {
                 case "installApk": return onInstallApkSync(params);
                 case "checkInstallPermission": return onCheckInstallPermissionSync();
                 case "requestInstallPermission": return onRequestInstallPermissionSync();
+                // Pinia store 持久化到 SharedPreferences（同步写磁盘，绕过 GeckoView localStorage 不刷盘问题）
+                case "persistStore": return onPersistStoreSync(params);
                 default:
                     return "{\"__nativeError\":\"Unknown method: " + method + "\"}";
             }
@@ -541,30 +573,36 @@ public class NativeAudioPlugin {
     }
 
     private String checkLyricPermissionJson() {
-        boolean overlayGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(activity);
+        MainActivity a = getActivity();
+        if (a == null) return "{}";
+        boolean overlayGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(a);
         boolean notificationGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
-            || activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
+            || a.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
         return "{\"overlayGranted\":" + overlayGranted + ",\"notificationGranted\":" + notificationGranted + "}";
     }
 
     private String requestOverlayPermissionSync() {
+        MainActivity a = getActivity();
+        if (a == null) return "{}";
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:" + activity.getPackageName()));
-            activity.startActivityForResult(intent, 2001);
+                Uri.parse("package:" + a.getPackageName()));
+            a.startActivityForResult(intent, 2001);
         }
         return "{}";
     }
 
     private String showFloatingLyricSync() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(activity)) {
+        MainActivity a = getActivity();
+        if (a == null) return "{}";
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(a)) {
             return "{\"__nativeError\":\"缺少悬浮窗权限\"}";
         }
-        Intent serviceIntent = new Intent(activity, LyricOverlayService.class);
+        Intent serviceIntent = new Intent(a, LyricOverlayService.class);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            activity.startForegroundService(serviceIntent);
+            a.startForegroundService(serviceIntent);
         } else {
-            activity.startService(serviceIntent);
+            a.startService(serviceIntent);
         }
         handler.postDelayed(() -> {
             LyricOverlayService service = LyricOverlayService.getInstance();
@@ -574,10 +612,12 @@ public class NativeAudioPlugin {
     }
 
     private String hideFloatingLyricSync() {
+        MainActivity a = getActivity();
+        if (a == null) return "{}";
         LyricOverlayService service = LyricOverlayService.getInstance();
         if (service != null) {
             service.hideOverlay();
-            activity.stopService(new Intent(activity, LyricOverlayService.class));
+            a.stopService(new Intent(a, LyricOverlayService.class));
         }
         return "{\"hidden\":true}";
     }
@@ -657,26 +697,28 @@ public class NativeAudioPlugin {
         String orientation = params.get("orientation");
         if (orientation == null) return "{}";
         handler.post(() -> {
+            MainActivity a = getActivity();
+            if (a == null) return;
             int requestedOrientation;
             switch (orientation) {
                 case "portrait":
                     requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
-                    activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-                    activity.getWindow().getDecorView().setSystemUiVisibility(0);
+                    a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                    a.getWindow().getDecorView().setSystemUiVisibility(0);
                     break;
                 case "landscape":
                     requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
-                    activity.getWindow().getDecorView().setSystemUiVisibility(
+                    a.getWindow().getDecorView().setSystemUiVisibility(
                         View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
                     );
                     break;
                 default: // "auto"
                     requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
-                    activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-                    activity.getWindow().getDecorView().setSystemUiVisibility(0);
+                    a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                    a.getWindow().getDecorView().setSystemUiVisibility(0);
                     break;
             }
-            activity.setRequestedOrientation(requestedOrientation);
+            a.setRequestedOrientation(requestedOrientation);
         });
         return "{}";
     }
@@ -684,34 +726,40 @@ public class NativeAudioPlugin {
     private String onSetFullScreenSync(Map<String, String> params) {
         boolean fullscreen = "true".equals(params.get("fullscreen"));
         handler.post(() -> {
+            MainActivity a = getActivity();
+            if (a == null) return;
             if (fullscreen) {
-                activity.getWindow().getDecorView().setSystemUiVisibility(
+                a.getWindow().getDecorView().setSystemUiVisibility(
                     View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
                 );
-                activity.getWindow().setStatusBarColor(Color.TRANSPARENT);
+                a.getWindow().setStatusBarColor(Color.TRANSPARENT);
             } else {
-                activity.getWindow().getDecorView().setSystemUiVisibility(0);
-                activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                a.getWindow().getDecorView().setSystemUiVisibility(0);
+                a.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
             }
         });
         return "{}";
     }
 
     private String onOpenExternalUrlSync(Map<String, String> params) {
+        MainActivity a = getActivity();
+        if (a == null) return "{}";
         String url = params.get("url");
         if (url != null && !url.isEmpty()) {
             Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            activity.startActivity(intent);
+            a.startActivity(intent);
         }
         return "{}";
     }
 
     private String onOpenAppSettingsSync() {
+        MainActivity a = getActivity();
+        if (a == null) return "{}";
         Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-            Uri.parse("package:" + activity.getPackageName()));
+            Uri.parse("package:" + a.getPackageName()));
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        activity.startActivity(intent);
+        a.startActivity(intent);
         return "{}";
     }
 
@@ -764,19 +812,23 @@ public class NativeAudioPlugin {
     }
 
     private String onCheckBatteryOptimizationSync() {
+        MainActivity a = getActivity();
+        if (a == null) return "{}";
         boolean ignoring = false;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            android.os.PowerManager pm = (android.os.PowerManager) activity.getSystemService(Context.POWER_SERVICE);
-            ignoring = pm.isIgnoringBatteryOptimizations(activity.getPackageName());
+            android.os.PowerManager pm = (android.os.PowerManager) a.getSystemService(Context.POWER_SERVICE);
+            ignoring = pm.isIgnoringBatteryOptimizations(a.getPackageName());
         }
         return "{\"ignoring\":" + ignoring + "}";
     }
 
     private String onRequestBatteryOptimizationSync() {
+        MainActivity a = getActivity();
+        if (a == null) return "{}";
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
-            intent.setData(Uri.parse("package:" + activity.getPackageName()));
-            activity.startActivity(intent);
+            intent.setData(Uri.parse("package:" + a.getPackageName()));
+            a.startActivity(intent);
         }
         return "{}";
     }
@@ -836,8 +888,10 @@ public class NativeAudioPlugin {
     }
 
     private String onSetKeepScreenOnSync(Map<String, String> params) {
+        MainActivity a = getActivity();
+        if (a == null) return "{}";
         boolean keepOn = "true".equals(params.get("keepOn"));
-        activity.setKeepScreenOn(keepOn);
+        a.setKeepScreenOn(keepOn);
         return "{}";
     }
 
@@ -888,12 +942,14 @@ public class NativeAudioPlugin {
     }
 
     private String onRequestInstallPermissionSync() {
+        MainActivity a = getActivity();
+        if (a == null) return "{}";
         ApkUpdateManager mgr = ApkUpdateManager.getInstance();
         if (mgr == null) return "{}";
         Intent intent = mgr.buildInstallPermissionIntent();
         if (intent != null) {
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            activity.startActivity(intent);
+            a.startActivity(intent);
         }
         return "{}";
     }
@@ -1134,6 +1190,11 @@ public class NativeAudioPlugin {
 
     // -- Time updates --
 
+    /** 前台更新间隔 (ms) */
+    private static final long TIME_UPDATE_INTERVAL_FOREGROUND = 500;
+    /** 后台更新间隔 (ms) — 降低 evalJs 调用频率以省电 */
+    private static final long TIME_UPDATE_INTERVAL_BACKGROUND = 3000;
+
     private void startTimeUpdates() {
         stopTimeUpdates();
         timeUpdateRunnable = new Runnable() {
@@ -1145,7 +1206,12 @@ public class NativeAudioPlugin {
                     double time = pos / 1000.0;
                     emitEvent("timeUpdate", "{\"currentTime\":" + time + "}");
                 }
-                handler.postDelayed(this, 500);
+                MainActivity a = getActivity();
+                boolean isForeground = a != null && !a.isFinishing();
+                long interval = isForeground
+                    ? TIME_UPDATE_INTERVAL_FOREGROUND
+                    : TIME_UPDATE_INTERVAL_BACKGROUND;
+                handler.postDelayed(this, interval);
             }
         };
         handler.post(timeUpdateRunnable);
@@ -1163,7 +1229,9 @@ public class NativeAudioPlugin {
     private void resolveCallback(String callbackId, String jsonResult) {
         if (callbackId == null) return;
         runOnUi(() -> {
-            activity.evalJs(
+            MainActivity a = getActivity();
+            if (a == null) return;
+            a.evalJs(
                 "if(window.NativeBridge&&window.NativeBridge._callbacks['" + callbackId + "']){" +
                 "window.NativeBridge._callbacks['" + callbackId + "'].resolve(" + jsonResult + ");" +
                 "delete window.NativeBridge._callbacks['" + callbackId + "'];}"
@@ -1175,7 +1243,9 @@ public class NativeAudioPlugin {
         if (callbackId == null) return;
         String escaped = errorMessage.replace("\\", "\\\\").replace("'", "\\'");
         runOnUi(() -> {
-            activity.evalJs(
+            MainActivity a = getActivity();
+            if (a == null) return;
+            a.evalJs(
                 "if(window.NativeBridge&&window.NativeBridge._callbacks['" + callbackId + "']){" +
                 "window.NativeBridge._callbacks['" + callbackId + "'].reject(" +
                 "new Error('" + escaped + "'));" +
@@ -1186,7 +1256,9 @@ public class NativeAudioPlugin {
 
     void emitEvent(String eventName, String jsonPayload) {
         runOnUi(() -> {
-            activity.evalJs(
+            MainActivity a = getActivity();
+            if (a == null) return;
+            a.evalJs(
                 "if(window.NativeBridge&&window.NativeBridge._listeners['" + eventName + "']){" +
                 "window.NativeBridge._listeners['" + eventName + "'].forEach(function(cb){" +
                 "cb(" + jsonPayload + ");});}"
@@ -1212,13 +1284,15 @@ public class NativeAudioPlugin {
         try {
             switch (action) {
                 case "checkPermission": {
+                    MainActivity a = getActivity();
+                    if (a == null) { rejectCallback(callbackId, "Activity is destroyed"); return; }
                     boolean overlayGranted = true;
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        overlayGranted = Settings.canDrawOverlays(activity);
+                        overlayGranted = Settings.canDrawOverlays(a);
                     }
                     boolean notificationGranted = true;
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        notificationGranted = activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                        notificationGranted = a.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
                             == PackageManager.PERMISSION_GRANTED;
                     }
                     resolveCallback(callbackId, "{\"overlayGranted\":" + overlayGranted
@@ -1226,26 +1300,30 @@ public class NativeAudioPlugin {
                     break;
                 }
                 case "requestOverlayPermission": {
+                    MainActivity a = getActivity();
+                    if (a == null) { rejectCallback(callbackId, "Activity is destroyed"); return; }
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                         Intent intent = new Intent(
                             Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:" + activity.getPackageName())
+                            Uri.parse("package:" + a.getPackageName())
                         );
-                        activity.startActivityForResult(intent, 2001);
+                        a.startActivityForResult(intent, 2001);
                     }
                     resolveCallback(callbackId, "{}");
                     break;
                 }
                 case "show": {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(activity)) {
+                    MainActivity a = getActivity();
+                    if (a == null) { rejectCallback(callbackId, "Activity is destroyed"); return; }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(a)) {
                         rejectCallback(callbackId, "缺少悬浮窗权限");
                         return;
                     }
-                    Intent serviceIntent = new Intent(activity, LyricOverlayService.class);
+                    Intent serviceIntent = new Intent(a, LyricOverlayService.class);
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        activity.startForegroundService(serviceIntent);
+                        a.startForegroundService(serviceIntent);
                     } else {
-                        activity.startService(serviceIntent);
+                        a.startService(serviceIntent);
                     }
                     handler.postDelayed(() -> {
                         try {
@@ -1263,10 +1341,12 @@ public class NativeAudioPlugin {
                     break;
                 }
                 case "hide": {
+                    MainActivity a = getActivity();
+                    if (a == null) { rejectCallback(callbackId, "Activity is destroyed"); return; }
                     LyricOverlayService service = LyricOverlayService.getInstance();
                     if (service != null) {
                         service.hideOverlay();
-                        activity.stopService(new Intent(activity, LyricOverlayService.class));
+                        a.stopService(new Intent(a, LyricOverlayService.class));
                     }
                     resolveCallback(callbackId, "{\"hidden\":true}");
                     break;
@@ -1320,20 +1400,22 @@ public class NativeAudioPlugin {
     }
 
     private void onShowFloatingLyric(Map<String, String> params, String callbackId) {
+        MainActivity a = getActivity();
+        if (a == null) { rejectCallback(callbackId, "Activity is destroyed"); return; }
         // Check overlay permission BEFORE starting service
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            if (!Settings.canDrawOverlays(activity)) {
+            if (!Settings.canDrawOverlays(a)) {
                 rejectCallback(callbackId, "Overlay permission not granted");
                 return;
             }
         }
 
         try {
-            Intent serviceIntent = new Intent(activity, LyricOverlayService.class);
+            Intent serviceIntent = new Intent(a, LyricOverlayService.class);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                activity.startForegroundService(serviceIntent);
+                a.startForegroundService(serviceIntent);
             } else {
-                activity.startService(serviceIntent);
+                a.startService(serviceIntent);
             }
         } catch (Exception e) {
             Log.e(TAG, "Failed to start LyricOverlayService", e);
@@ -1359,10 +1441,12 @@ public class NativeAudioPlugin {
     }
 
     private void onHideFloatingLyric(String callbackId) {
+        MainActivity a = getActivity();
+        if (a == null) { rejectCallback(callbackId, "Activity is destroyed"); return; }
         LyricOverlayService service = LyricOverlayService.getInstance();
         if (service != null) {
             service.hideOverlay();
-            activity.stopService(new Intent(activity, LyricOverlayService.class));
+            a.stopService(new Intent(a, LyricOverlayService.class));
         }
         resolveCallback(callbackId, "{\"hidden\":true}");
     }
@@ -1405,9 +1489,11 @@ public class NativeAudioPlugin {
     }
 
     private void onCheckOverlayPermission(String callbackId) {
+        MainActivity a = getActivity();
+        if (a == null) { rejectCallback(callbackId, "Activity is destroyed"); return; }
         boolean granted;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            granted = Settings.canDrawOverlays(activity);
+            granted = Settings.canDrawOverlays(a);
         } else {
             granted = true;
         }
@@ -1415,28 +1501,32 @@ public class NativeAudioPlugin {
     }
 
     private void onRequestOverlayPermission(String callbackId) {
+        MainActivity a = getActivity();
+        if (a == null) { rejectCallback(callbackId, "Activity is destroyed"); return; }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             Intent intent = new Intent(
                 Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:" + activity.getPackageName())
+                Uri.parse("package:" + a.getPackageName())
             );
-            activity.startActivityForResult(intent, 2001);
+            a.startActivityForResult(intent, 2001);
         }
         resolveCallback(callbackId, "{}");
     }
 
     private void onCheckLyricReady(String callbackId) {
+        MainActivity a = getActivity();
+        if (a == null) { rejectCallback(callbackId, "Activity is destroyed"); return; }
         boolean overlayGranted = true;
         boolean notificationGranted = true;
 
         // Check overlay permission
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            overlayGranted = Settings.canDrawOverlays(activity);
+            overlayGranted = Settings.canDrawOverlays(a);
         }
 
         // Check notification permission
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            notificationGranted = activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+            notificationGranted = a.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
                 == PackageManager.PERMISSION_GRANTED;
         }
 
@@ -1454,46 +1544,127 @@ public class NativeAudioPlugin {
     }
 
     private void onCheckBatteryOptimization(String callbackId) {
+        MainActivity a = getActivity();
+        if (a == null) { rejectCallback(callbackId, "Activity is destroyed"); return; }
         boolean ignoring = false;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            android.os.PowerManager pm = (android.os.PowerManager) activity.getSystemService(Context.POWER_SERVICE);
-            ignoring = pm.isIgnoringBatteryOptimizations(activity.getPackageName());
+            android.os.PowerManager pm = (android.os.PowerManager) a.getSystemService(Context.POWER_SERVICE);
+            ignoring = pm.isIgnoringBatteryOptimizations(a.getPackageName());
         }
         resolveCallback(callbackId, "{\"ignoring\":" + ignoring + "}");
     }
 
     private void onRequestBatteryOptimization(String callbackId) {
+        MainActivity a = getActivity();
+        if (a == null) { rejectCallback(callbackId, "Activity is destroyed"); return; }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
-            intent.setData(Uri.parse("package:" + activity.getPackageName()));
-            activity.startActivity(intent);
+            intent.setData(Uri.parse("package:" + a.getPackageName()));
+            a.startActivity(intent);
         }
         resolveCallback(callbackId, "{}");
     }
 
     private void onUpdateMediaMetadata(Map<String, String> params) {
+        MainActivity a = getActivity();
+        if (a == null) return;
         String title = params.getOrDefault("title", "");
         String artist = params.getOrDefault("artist", "");
         String coverUrl = params.getOrDefault("coverUrl", "");
         long durationMs = 0;
         try { durationMs = Long.parseLong(params.getOrDefault("durationMs", "0")); } catch (NumberFormatException ignored) {}
-        MediaNotificationService service = MediaNotificationService.getInstance();
+        MediaNotificationService service = ensureMediaService();
         if (service != null) {
-            service.setActivity(activity);
+            service.setActivity(a);
             service.updateMetadata(title, artist, coverUrl, durationMs);
         }
     }
 
     private void onUpdateMediaPlaybackState(Map<String, String> params) {
+        MainActivity a = getActivity();
+        if (a == null) return;
         boolean playing = "true".equals(params.getOrDefault("isPlaying", "false"));
         long positionMs = 0;
         long durationMs = 0;
         try { positionMs = Long.parseLong(params.getOrDefault("positionMs", "0")); } catch (NumberFormatException ignored) {}
         try { durationMs = Long.parseLong(params.getOrDefault("durationMs", "0")); } catch (NumberFormatException ignored) {}
-        MediaNotificationService service = MediaNotificationService.getInstance();
+        MediaNotificationService service = ensureMediaService();
         if (service != null) {
-            service.setActivity(activity);
+            service.setActivity(a);
             service.updatePlaybackState(playing, positionMs, durationMs);
+        }
+    }
+
+    /**
+     * 确保 MediaNotificationService 正在运行。如果静态实例为 null（服务被系统杀死），
+     * 尝试重新启动。返回服务实例，如果无法启动则返回 null。
+     */
+    private MediaNotificationService ensureMediaService() {
+        MediaNotificationService service = MediaNotificationService.getInstance();
+        if (service != null) return service;
+
+        MainActivity a = getActivity();
+        if (a == null) return null;
+
+        Log.w(TAG, "MediaNotificationService instance is null, attempting restart");
+        try {
+            Intent serviceIntent = new Intent(a, MediaNotificationService.class);
+            MediaNotificationService.setPendingActivity(a);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                a.startForegroundService(serviceIntent);
+            } else {
+                a.startService(serviceIntent);
+            }
+            service = MediaNotificationService.getInstance();
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to restart MediaNotificationService", e);
+        }
+        return service;
+    }
+
+    // -- Pinia store 持久化到 SharedPreferences --
+
+    private String onPersistStoreSync(Map<String, String> params) {
+        String storeId = params.get("storeId");
+        String data = params.get("data");
+        if (storeId == null || data == null) {
+            return "{\"__nativeError\":\"storeId and data are required\"}";
+        }
+        try {
+            MainActivity a = getActivity();
+            if (a == null) return "{\"__nativeError\":\"activity destroyed\"}";
+            // 线程安全：先更新内存缓存
+            synchronized (storeCache) {
+                storeCache.put(storeId, data);
+            }
+            boolean ok = a.getSharedPreferences("pinia_stores", Context.MODE_PRIVATE)
+                .edit()
+                .putString(storeId, data)
+                .commit(); // commit() 同步写磁盘，确保数据落盘
+            if (!ok) {
+                Log.e(TAG, "persistStore commit failed for " + storeId);
+                return "{\"__nativeError\":\"commit failed\"}";
+            }
+            return "{\"ok\":true}";
+        } catch (Exception e) {
+            return "{\"__nativeError\":\"" + e.getMessage().replace("\"", "'") + "\"}";
+        }
+    }
+
+    // onPause 时由 MainActivity 调用，直接从内存缓存同步写盘，完全不依赖 JS 层的 evalJs
+    public void persistAllCachedStores() {
+        MainActivity a = getActivity();
+        if (a == null) return;
+        android.content.SharedPreferences sp = a.getSharedPreferences("pinia_stores", Context.MODE_PRIVATE);
+        android.content.SharedPreferences.Editor editor = sp.edit();
+        synchronized (storeCache) {
+            for (Map.Entry<String, String> entry : storeCache.entrySet()) {
+                editor.putString(entry.getKey(), entry.getValue());
+            }
+        }
+        boolean ok = editor.commit();
+        if (!ok) {
+            Log.e(TAG, "persistAllCachedStores commit failed");
         }
     }
 

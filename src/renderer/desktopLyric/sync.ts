@@ -7,7 +7,7 @@ import { isGeckoView } from '../utils/nativeBridge';
 import { initAndroidLyricSync } from './androidSync';
 import type { DesktopLyricPlaybackPayload, LyricLinePayload } from '../../shared/desktop-lyric';
 
-const DESKTOP_LYRIC_PROGRESS_SYNC_INTERVAL_MS = 80;
+const DESKTOP_LYRIC_PROGRESS_SYNC_INTERVAL_MS = 150;
 
 const normalizeLinePayload = (
   line: ReturnType<typeof useLyricStore>['lines'][number],

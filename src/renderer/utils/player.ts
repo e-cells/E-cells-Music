@@ -730,4 +730,18 @@ export class PlayerEngine {
   get playbackRate(): number {
     return this.playbackRateValue;
   }
+
+  /** 销毁引擎，释放所有事件监听器和音频资源 */
+  destroy(): void {
+    this.unloadHowl();
+    this.cleanupNativeListeners();
+    for (const fn of this.cleanupFns) {
+      try { fn(); } catch { /* ignore */ }
+    }
+    this.cleanupFns = [];
+    if (this.webAudioEngine) {
+      this.webAudioEngine.destroy();
+      this.webAudioEngine = null;
+    }
+  }
 }

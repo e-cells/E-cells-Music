@@ -887,9 +887,11 @@ const handleShowChangelog = async () => {
           </div>
           <Switch
             :model-value="settingStore.autoPlayOnStart"
-            @update:model-value="(value) => {
+            @update:model-value="(value: boolean) => {
               settingStore.autoPlayOnStart = value;
-              settingStore.$persist();
+              // 绕过 pinia-plugin-persistedstate，直接调用 localStorage.setItem
+              // 确保覆盖函数中的 window.prompt 桥立即同步到 SharedPreferences
+              try { localStorage.setItem('setting', JSON.stringify(settingStore.$state)); } catch {}
             }"
           />
         </div>

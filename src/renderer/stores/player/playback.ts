@@ -644,7 +644,7 @@ export const createPlaybackManager = (
     return indices;
   };
 
-  window.addEventListener('offline', () => {
+  const offlineHandler = () => {
     if (state.isPlaying || state.isLoading) {
       isRecovering = true;
       recoverySavedTime = state.currentTime;
@@ -655,9 +655,9 @@ export const createPlaybackManager = (
       }
       clearAutoNextTimer();
     }
-  });
+  };
 
-  window.addEventListener('online', () => {
+  const onlineHandler = () => {
     if (isRecovering && state.currentTrackId) {
       if (recoveryTimer !== null) {
         window.clearTimeout(recoveryTimer);
@@ -672,7 +672,15 @@ export const createPlaybackManager = (
         );
       }, 1500);
     }
-  });
+  };
+
+  window.addEventListener('offline', offlineHandler);
+  window.addEventListener('online', onlineHandler);
+
+  const cleanupNetworkListeners = () => {
+    window.removeEventListener('offline', offlineHandler);
+    window.removeEventListener('online', onlineHandler);
+  };
 
   return {
     applyFailedPlaybackState,
@@ -689,5 +697,6 @@ export const createPlaybackManager = (
     pickRandomIndex,
     shuffleInsert,
     buildShuffleQueue,
+    cleanupNetworkListeners,
   };
 };

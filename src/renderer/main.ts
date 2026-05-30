@@ -10,6 +10,32 @@ import './style.css';
 
 const app = createApp(App);
 const pinia = createPinia();
+
+// === GeckoView localStorage 不刷盘修复 ===
+// 覆盖 localStorage.setItem，让每次写入都同步写入 Android SharedPreferences。
+// 不依赖 __persistToNativeReady 标志，始终尝试调用原生桥；
+// 如果桥未就绪 window.prompt 会返回 null，原生层 onPause 也会通过 storeCache 兜底写盘。
+const _originalSetItem = localStorage.setItem.bind(localStorage);
+localStorage.setItem = function geckoViewSetItem(key: string, value: string) {
+  _originalSetItem(key, value);
+  try {
+    const result = window.prompt(
+      '__native__',
+      `native://persistStore?storeId=${encodeURIComponent(key)}&data=${encodeURIComponent(value)}`,
+    );
+    if (result) {
+      try {
+        const parsed = JSON.parse(result);
+        if (parsed?.__nativeError) {
+          logger.error('App', `persistStore failed for ${key}: ${parsed.__nativeError}`);
+        }
+      } catch {}
+    }
+  } catch {
+    // 桥不可用时静默失败（原生层 onPause 会通过 storeCache 兜底写盘）
+  }
+};
+
 pinia.use(piniaPluginPersistedstate);
 
 // 只对路由加载错误跳转错误页，其他错误仅记录日志
@@ -59,6 +85,7 @@ app.component('Icon', Icon);
 app.mount('#app');
 
 // APP 被杀死前强制持久化所有 store 状态（pagehide 是同步事件）
+// localStorage.setItem 已被覆盖，会自动同步写入 SharedPreferences
 window.addEventListener('pagehide', () => {
   try {
     const piniaState = pinia.state.value;
@@ -67,6 +94,16 @@ window.addEventListener('pagehide', () => {
     }
   } catch {}
 });
+
+// 暴露全局持久化函数，供原生层 onPause 时通过 evalJs 调用
+(window as any).__persistAllStores = () => {
+  try {
+    const piniaState = pinia.state.value;
+    for (const storeId of Object.keys(piniaState)) {
+      localStorage.setItem(storeId, JSON.stringify(piniaState[storeId]));
+    }
+  } catch {}
+};
 
 schedulePreloadLyric();
 

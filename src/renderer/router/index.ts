@@ -62,6 +62,17 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/Ranking.vue'),
       },
       {
+        path: 'radio',
+        name: 'radio',
+        component: () => import('@/views/Radio.vue'),
+      },
+      {
+        path: 'radio/:id',
+        name: 'radio-detail',
+        component: () => import('@/views/details/RadioDetail.vue'),
+        meta: { title: '电台详情' },
+      },
+      {
         path: 'history',
         name: 'history',
         component: () => import('@/views/History.vue'),

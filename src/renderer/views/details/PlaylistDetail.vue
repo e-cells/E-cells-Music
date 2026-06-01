@@ -760,14 +760,6 @@ const sortedSongs = computed(() => {
             </span>
           </div>
 
-          <div class="mt-2.5">
-            <ActionRow
-              :secondaryActions="secondaryActions"
-              @play="handlePlayAll"
-              @batch="openBatchDrawer"
-            />
-          </div>
-
           <div v-if="playlist.intro" class="mt-2 pb-1">
             <div class="text-[12px] leading-relaxed text-text-secondary/70 line-clamp-2 cursor-pointer hover:text-text-main transition-colors" @click="showIntroDialog = true">
               {{ playlist.intro }}
@@ -777,6 +769,13 @@ const sortedSongs = computed(() => {
 
         <Tabs :model-value="activeTab" class="w-full" @update:model-value="handleTabChange">
           <div class="song-list-sticky sticky z-[110] bg-bg-main" :style="{ top: `${tabsTop}px` }">
+            <div class="px-4 pb-2 pt-2">
+              <ActionRow
+                :secondaryActions="secondaryActions"
+                @play="handlePlayAll"
+                @batch="openBatchDrawer"
+              />
+            </div>
             <div class="border-b border-border-light/10 px-4">
               <div class="flex items-center justify-between h-10">
                 <TabsList class="bg-transparent border-none gap-6">

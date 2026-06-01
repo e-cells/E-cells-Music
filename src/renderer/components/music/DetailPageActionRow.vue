@@ -12,12 +12,14 @@ interface Action {
 
 interface Props {
   playLabel?: string;
+  playDisabled?: boolean;
   onPlay?: () => void;
   secondaryActions?: Action[];
 }
 
-withDefaults(defineProps<Props>(), {
+const props = withDefaults(defineProps<Props>(), {
   playLabel: '播放',
+  playDisabled: false,
   secondaryActions: () => [],
 });
 
@@ -29,7 +31,7 @@ const emit = defineEmits<{
 
 <template>
   <div class="action-row-wrap flex flex-wrap items-center justify-start gap-2.5">
-    <Button variant="unstyled" size="none" @click="emit('play')" class="action-btn primary">
+    <Button variant="unstyled" size="none" :disabled="props.playDisabled" @click="emit('play')" class="action-btn primary" :class="{ 'action-btn-disabled': props.playDisabled }">
       <Icon :icon="iconPlay" width="18" height="18" />
       <span>{{ playLabel }}</span>
     </Button>
@@ -94,5 +96,10 @@ const emit = defineEmits<{
 
 .dark .action-btn {
   background-color: rgba(255, 255, 255, 0.08);
+}
+
+.action-btn-disabled {
+  opacity: 0.45;
+  pointer-events: none;
 }
 </style>

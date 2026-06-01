@@ -74,6 +74,7 @@ import lockOpen from '@iconify/icons-tabler/lock-open';
 // import playlistAdd from '@iconify/icons-tabler/playlist-add';
 import textPlus from '@iconify/icons-tabler/text-plus';
 import microphone from '@iconify/icons-tabler/microphone';
+import antenna from '@iconify/icons-tabler/antenna';
 import database from '@iconify/icons-tabler/database';
 
 export const iconChevronDown = chevronDown as IconifyIcon;
@@ -153,4 +154,5 @@ export const iconLock = lock as IconifyIcon;
 export const iconLockOpen = lockOpen as IconifyIcon;
 export const iconPlaylistAdd = textPlus as IconifyIcon;
 export const iconMicrophone = microphone as IconifyIcon;
+export const iconAntenna = antenna as IconifyIcon;
 export const iconDatabase = database as IconifyIcon;

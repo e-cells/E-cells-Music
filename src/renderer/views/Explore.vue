@@ -552,8 +552,9 @@ const detachScrollTarget = () => {
 // ---------------------------------------------------------------
 
 onMounted(() => {
-  void loadPlaylistCategories();
-  void loadRecommendedPlaylists();
+  void loadPlaylistCategories().then(() => {
+    void loadRecommendedPlaylists();
+  });
   void attachScrollTarget(); // 挂载时绑定代理事件
 });
 

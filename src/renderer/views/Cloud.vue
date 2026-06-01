@@ -413,10 +413,6 @@ onMounted(() => {
             <span class="px-2 py-0.5 rounded text-[10px] font-bold tracking-[0.8px] uppercase text-primary bg-primary/10 border border-primary/15">CLOUD</span>
           </div>
 
-          <div class="mt-2.5">
-            <ActionRow @play="handlePlayAll" @batch="openBatchDrawer" />
-          </div>
-
           <div class="mt-2.5 pb-1">
             <div class="cloud-info-card">
               <div class="flex items-center justify-between">
@@ -435,6 +431,9 @@ onMounted(() => {
         </div>
 
         <div class="song-list-sticky sticky z-[110] bg-bg-main" :style="{ top: '0px' }">
+          <div class="px-4 pb-2 pt-2">
+            <ActionRow @play="handlePlayAll" @batch="openBatchDrawer" />
+          </div>
           <div class="border-b border-border-light/10 px-4">
             <div class="flex items-center justify-between h-10">
               <div class="text-[13px] font-semibold text-text-main relative">

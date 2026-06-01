@@ -31,6 +31,7 @@ export type PlaybackQueueType =
   | 'history'
   | 'cloud'
   | 'fm'
+  | 'radio'
   | 'manual';
 export type PersonalFmMode = 'normal' | 'small' | 'peak';
 

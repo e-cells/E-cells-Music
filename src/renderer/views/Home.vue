@@ -10,7 +10,7 @@ import PlaylistCard from '@/components/music/PlaylistCard.vue';
 import { mapPlaylistMeta } from '@/utils/mappers';
 import { extractList } from '@/utils/extractors';
 import type { PlaylistMeta } from '@/models/playlist';
-import { iconPlay, iconSparkles, iconChevronRight } from '@/icons';
+import { iconPlay, iconAntenna, iconChevronRight } from '@/icons';
 import Button from '@/components/ui/Button.vue';
 import UserAgreementDialog from '@/components/app/UserAgreementDialog.vue';
 
@@ -109,7 +109,7 @@ const openRecommend = () => {
 };
 
 const openRanking = () => {
-  router.push({ name: 'ranking' });
+  router.push({ name: 'radio' });
 };
 
 const resolvePlaylistRouteId = (entry: PlaylistMeta) =>
@@ -173,11 +173,11 @@ const handleRejectAgreement = () => {
       </Button>
       <Button variant="unstyled" size="none" class="home-feature-card group" @click="openRanking">
         <div class="feature-icon gradient-secondary group-active:scale-95 transition-transform">
-          <Icon :icon="iconSparkles" width="28" height="28" class="landscape-icon" />
+          <Icon :icon="iconAntenna" width="28" height="28" class="landscape-icon" />
         </div>
         <div class="feature-meta">
-          <div class="feature-title">排行榜</div>
-          <div class="feature-sub">发现流行热歌</div>
+          <div class="feature-title">音乐电台</div>
+          <div class="feature-sub">发现好声音</div>
         </div>
       </Button>
     </div>

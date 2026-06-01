@@ -26,6 +26,7 @@ interface RequestConfig {
   params?: Record<string, any>;
   data?: any;
   headers?: Record<string, string>;
+  signal?: AbortSignal;
 }
 
 // --- 在线后端配置 ---
@@ -152,6 +153,10 @@ const httpOnlineRequest = async (
 
   if (config?.data && method !== 'GET') {
     fetchOptions.body = JSON.stringify(config.data);
+  }
+
+  if (config?.signal) {
+    fetchOptions.signal = config.signal;
   }
 
   const response = await fetch(fullUrl.toString(), fetchOptions);

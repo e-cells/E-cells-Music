@@ -26,8 +26,9 @@ export function getSearchDefault() {
 /**
  * 获取搜索建议
  */
-export function getSearchSuggest(keywords: string) {
+export function getSearchSuggest(keywords: string, signal?: AbortSignal) {
   return request.get('/search/suggest', {
     params: { keywords },
+    signal,
   });
 }

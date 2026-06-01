@@ -35,6 +35,12 @@ const isPortrait = computed(() => {
   return windowWidth.value < windowHeight.value;
 });
 
+// 横屏布局顶部安全区域（状态栏高度）
+const statusBarPaddingTop = computed(() => {
+  const h = (window as any).__STATUS_BAR_HEIGHT__ || 0;
+  return h ? `${h}px` : '0px';
+});
+
 // 始终 keepAlive 的路由
 const alwaysKeepAlive = ['personal-fm'];
 
@@ -67,6 +73,7 @@ watch(
   <div
     v-else
     class="main-layout h-screen w-screen flex overflow-hidden bg-bg-main text-text-main transition-colors duration-300"
+    :style="{ paddingTop: statusBarPaddingTop }"
   >
     <Sidebar 
       class="shrink-0 transition-all duration-300 ease-in-out" 

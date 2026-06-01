@@ -29,6 +29,8 @@ import android.hardware.SensorManager;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.view.WindowCompat;
+import org.json.JSONObject;
 import org.mozilla.geckoview.GeckoView;
 import org.mozilla.geckoview.GeckoSession;
 import org.mozilla.geckoview.GeckoRuntime;
@@ -111,17 +113,8 @@ public class MainActivity extends AppCompatActivity {
 
         // FLAG_KEEP_SCREEN_ON 已移除，通过 native://setKeepScreenOn bridge 按需开启
 
-        int orientation = getResources().getConfiguration().orientation;
         lastNightMode = getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
-        if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
-            getWindow().getDecorView().setSystemUiVisibility(
-                View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-            );
-        } else {
-            getWindow().getDecorView().setSystemUiVisibility(
-                View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-            );
-        }
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
         
         getWindow().setStatusBarColor(Color.TRANSPARENT);
         
@@ -152,7 +145,9 @@ public class MainActivity extends AppCompatActivity {
             geckoView.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
                 @Override
                 public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
-                    v.setPadding(0, 0, 0, 0);
+                    // 不对 GeckoView 设置 padding，避免触摸坐标偏移
+                    // 状态栏高度已通过 JS 注入 window.__STATUS_BAR_HEIGHT__ 传递给前端
+                    // 前端通过 env(safe-area-inset-*) 和 __STATUS_BAR_HEIGHT__ 自行处理安全区域
                     return insets;
                 }
             });
@@ -227,8 +222,9 @@ public class MainActivity extends AppCompatActivity {
                             for (java.util.Map.Entry<String, ?> entry : all.entrySet()) {
                                 String key = entry.getKey();
                                 String val = String.valueOf(entry.getValue());
-                                String escaped = val.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "");
-                                sb.append("localStorage.setItem('").append(key).append("','").append(escaped).append("');");
+                                String quotedVal = JSONObject.quote(val);
+                                String quotedKey = JSONObject.quote(key);
+                                sb.append("localStorage.setItem(").append(quotedKey).append(",").append(quotedVal).append(");");
                             }
                             sb.append("}catch(e){}");
                             evalJs(sb.toString());
@@ -351,15 +347,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        if (newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE) {
-            getWindow().getDecorView().setSystemUiVisibility(
-                View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-            );
-        } else {
-            getWindow().getDecorView().setSystemUiVisibility(
-                View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-            );
-        }
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
         
         if (geckoView != null) {
             geckoView.requestApplyInsets();
@@ -462,11 +450,11 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void executeVoiceSearch(String query) {
-        String escaped = query.replace("\\", "\\\\").replace("'", "\\'").replace("\"", "\\\"");
+        String quoted = JSONObject.quote(query);
         evalJs(
             "if(window.NativeBridge&&window.NativeBridge._listeners&&window.NativeBridge._listeners['mediaButtonPlayFromSearch']){" +
-            "window.NativeBridge._listeners['mediaButtonPlayFromSearch'].forEach(function(cb){cb('" + escaped + "');});" +
-            "}else{window.__pendingVoiceSearch='" + escaped + "';}"
+            "window.NativeBridge._listeners['mediaButtonPlayFromSearch'].forEach(function(cb){cb(" + quoted + ");});" +
+            "}else{window.__pendingVoiceSearch=" + quoted + ";}"
         );
     }
 

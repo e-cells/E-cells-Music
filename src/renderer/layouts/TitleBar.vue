@@ -24,6 +24,7 @@ const showSuggestions = ref(false);
 const suggestions = ref<{ label: string; records: { text: string }[] }[]>([]);
 const isLoadingSuggestions = ref(false);
 let suggestTimer: number | null = null;
+let suggestAbortController: AbortController | null = null;
 
 const updateNavState = () => {
   if (typeof window === 'undefined') return;
@@ -89,6 +90,10 @@ const handleSearchInput = (value: string) => {
     window.clearTimeout(suggestTimer);
     suggestTimer = null;
   }
+  if (suggestAbortController) {
+    suggestAbortController.abort();
+    suggestAbortController = null;
+  }
   if (!value.trim()) {
     suggestions.value = [];
     showSuggestions.value = false;
@@ -96,12 +101,15 @@ const handleSearchInput = (value: string) => {
   }
   isLoadingSuggestions.value = true;
   suggestTimer = window.setTimeout(async () => {
+    const controller = new AbortController();
+    suggestAbortController = controller;
     try {
-      const res = await getSearchSuggest(value.trim());
+      const res = await getSearchSuggest(value.trim(), controller.signal);
       if (searchQuery.value.trim() !== value.trim()) return;
       suggestions.value = extractSuggestions(res);
       showSuggestions.value = suggestions.value.length > 0;
-    } catch {
+    } catch (e: any) {
+      if (e instanceof DOMException && e.name === 'AbortError') return;
       suggestions.value = [];
     }
     isLoadingSuggestions.value = false;
@@ -161,6 +169,10 @@ onUnmounted(() => {
   window.removeEventListener('popstate', updateNavState);
   document.removeEventListener('pointerdown', handleGlobalPointerDown, true);
   if (suggestTimer) window.clearTimeout(suggestTimer);
+  if (suggestAbortController) {
+    suggestAbortController.abort();
+    suggestAbortController = null;
+  }
 });
 </script>
 
@@ -390,6 +402,7 @@ onUnmounted(() => {
 .tb-search-expanded {
   position: relative;
   width: 320px;
+  will-change: width, opacity;
   animation: tb-search-expand 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 

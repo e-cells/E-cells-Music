@@ -53,8 +53,10 @@
 运行本应用必须配合**自建**后端接口服务：
 - **后端项目地址**：[MakcRe/KuGouMusicApi](https://github.com/MakcRe/KuGouMusicApi)
 - ⚠️ **安全警告**：本项目不提供公共后端 API，请勿随意使用他人提供的公共服务，以免造成账号信息泄露！
-- **后端部署教程**：[点我查阅使用 Docker 部署后端服务的图文教程](https://www.bilibili.com/opus/1206580399410511893)
-
+### 🛠️ 后端服务支持（必看）
+运行本应用必须配合**自建**后端接口服务：
+- **后端项目地址**：[MakcRe/KuGouMusicApi](https://github.com/MakcRe/KuGouMusicApi)
+⚠️ **安全警告**：本项目不提供公共后端 API，请勿随意使用他人提供的公共服务，以免造成账号信息泄露！
 
 **部署提示：**
 1. **IP 限制**：后端服务**不能使用 Vercel 或国外服务器**，出口 IP 必须是**中国大陆境内**，否则会导致登录失败或数据无法加载。
@@ -62,6 +64,39 @@
 3. **环境变量**：Docker 容器构建时需添加环境变量 `key = platform`, `Value = lite`。
 4. **网页页面示范**：部署成功后，访问后端服务应显示如下页面：
    ![KuGouMusicApi 部署成功页面示范](https://github.com/user-attachments/assets/97909a7f-0d60-4957-a89e-b93b0b9e040e)
+   
+#### 🐳 极速部署教程 (Docker)
+
+你可以根据实际情况，选择使用 Docker CLI 或 Docker Compose 来启动服务，启动后，API 服务将运行在宿主机的 `8542` 端口。
+
+### 方式一：使用 Docker CLI 极速运行
+使用以下命令一键启动。此命令默认启用了 （酷狗概念版数据源，兼容性更好），并将容器内的 3000 端口映射到宿主机的 3000 端口：
+
+```bash
+docker run -d \
+  --name kugou-api \
+  --restart unless-stopped \
+  -e platform=lite \
+  -p 8542:3000 \
+  hly307765464/kugou-music-api:latest
+```
+
+
+### 方式二：使用 Docker Compose 部署 (推荐)
+
+如果你需要更方便地管理容器，推荐使用 Compose 部署。请在服务器上新建一个 docker-compose.yml 文件，填入以下内容：
+```bash
+version: '3.8'
+services:
+  kugou-api:
+    image: hly307765464/kugou-music-api:latest  # 直接拉取 Docker Hub 上的最新镜像
+    container_name: kugou-music-api
+    restart: unless-stopped
+    environment:
+      - platform=lite  # 启用酷狗概念版接口
+    ports:
+      - "8542:3000"    # 将宿主机的 8542 端口映射到容器内部的 3000 端口
+```
 
 ### ⚙️ 初始化与登录
 1. **配置接口**：首次启动会进入古风 Q 版初始化界面，填入你部署好的后端网址（如：`http://192.168.x.x:端口` 或 `http://你的域名`），点击“确认并继续”。

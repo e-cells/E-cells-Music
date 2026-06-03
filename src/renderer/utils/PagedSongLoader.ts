@@ -30,6 +30,8 @@ export interface PagedLoaderOptions<T> {
   maxPages?: number;
   /** 首批加载页数，默认 1。设为 3 可在首屏同时加载 3 页以加快展示 */
   initialPages?: number;
+  /** 失败重试次数，默认 1。设为 0 禁用重试 */
+  maxRetries?: number;
 }
 
 /**
@@ -58,6 +60,7 @@ export class PagedSongLoader<T> {
   private readonly logTag: string;
   private readonly maxPages: number;
   private readonly initialPages: number;
+  private readonly maxRetries: number;
 
   constructor(fetcher: PageFetcher<T>, options: PagedLoaderOptions<T> = {}) {
     this.fetcher = fetcher;
@@ -70,6 +73,7 @@ export class PagedSongLoader<T> {
     this.logTag = options.logTag ?? 'PagedLoader';
     this.maxPages = options.maxPages ?? 100;
     this.initialPages = options.initialPages ?? 1;
+    this.maxRetries = options.maxRetries ?? 1;
   }
 
   /** 当前已加载的数据（只读） */
@@ -117,7 +121,7 @@ export class PagedSongLoader<T> {
       );
 
       const results = await Promise.allSettled(
-        pageNumbers.map((page) => this.fetcher(page, this.pageSize)),
+        pageNumbers.map((page) => this.fetchWithRetry(page)),
       );
 
       if (this._aborted) return this._items;
@@ -128,7 +132,7 @@ export class PagedSongLoader<T> {
         const result = results[i];
         if (result.status === 'rejected') {
           logger.warn(this.logTag, `Initial page ${pageNumbers[i]} failed:`, result.reason);
-          break;
+          continue; // 跳过失败页，继续处理后续成功页
         }
 
         const { items, hasMore } = result.value;
@@ -193,9 +197,9 @@ export class PagedSongLoader<T> {
           batch.push(nextPage + i);
         }
 
-        // 并发请求
+        // 并发请求（带重试）
         const results = await Promise.allSettled(
-          batch.map((page) => this.fetcher(page, this.pageSize)),
+          batch.map((page) => this.fetchWithRetry(page)),
         );
 
         if (this._aborted) break;
@@ -206,9 +210,8 @@ export class PagedSongLoader<T> {
           const page = batch[i];
 
           if (result.status === 'rejected') {
-            logger.warn(this.logTag, `第 ${page} 页加载失败:`, result.reason);
-            keepGoing = false;
-            break;
+            logger.warn(this.logTag, `第 ${page} 页加载失败（已重试）:`, result.reason);
+            continue; // 跳过失败页，继续处理后续页
           }
 
           const { items, hasMore } = result.value;
@@ -230,6 +233,12 @@ export class PagedSongLoader<T> {
             keepGoing = false;
             break;
           }
+        }
+
+        // 如果本批次全部失败，停止加载避免无限循环
+        if (results.every((r) => r.status === 'rejected')) {
+          logger.warn(this.logTag, '批次全部失败，停止加载');
+          keepGoing = false;
         }
 
         nextPage += batch.length;
@@ -290,6 +299,22 @@ export class PagedSongLoader<T> {
     this._completionResolve = null;
     // 重置后允许重新加载
     this._aborted = false;
+  }
+
+  /** 带重试的单页获取 */
+  private async fetchWithRetry(page: number): Promise<{ items: T[]; hasMore: boolean }> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      try {
+        return await this.fetcher(page, this.pageSize);
+      } catch (err) {
+        lastError = err;
+        if (attempt < this.maxRetries) {
+          await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+        }
+      }
+    }
+    throw lastError;
   }
 
   /** 去重并追加到内部数组 */

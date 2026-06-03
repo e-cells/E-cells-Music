@@ -130,7 +130,7 @@ const createLoader = (
     },
     {
       pageSize: 20,
-      concurrency: 5,
+      concurrency: 3,
       initialPages: 5,
       dedupeKey: (song) => String(song.id),
       logTag: 'RadioDetailLoader',

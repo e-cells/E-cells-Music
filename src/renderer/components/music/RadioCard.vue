@@ -2,6 +2,7 @@
 import { useRouter } from 'vue-router';
 import Cover from '@/components/ui/Cover.vue';
 import { iconPlay } from '@/icons';
+import { prefetchRadioSongs } from '@/api/radio';
 
 interface Props {
   fmid: number;
@@ -16,6 +17,11 @@ const props = withDefaults(defineProps<Props>(), {
 });
 
 const router = useRouter();
+
+// 悬停/触摸时预加载该电台的歌曲
+const handlePrefetch = () => {
+  prefetchRadioSongs(props.fmid);
+};
 
 const handleClick = () => {
   router.push({
@@ -41,6 +47,8 @@ const handlePlay = (e: Event) => {
     v-if="layout === 'grid'"
     class="radio-card-grid group cursor-pointer"
     @click="handleClick"
+    @mouseenter="handlePrefetch"
+    @touchstart="handlePrefetch"
   >
     <div class="card-container">
       <div class="cover-wrapper">
@@ -69,6 +77,8 @@ const handlePlay = (e: Event) => {
     v-else
     class="radio-card-list group cursor-pointer"
     @click="handleClick"
+    @mouseenter="handlePrefetch"
+    @touchstart="handlePrefetch"
   >
     <div class="cover-wrapper-list relative overflow-hidden shrink-0">
       <Cover

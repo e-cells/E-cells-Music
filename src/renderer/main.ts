@@ -5,6 +5,7 @@ import { Icon } from '@iconify/vue';
 import App from './App.vue';
 import router from './router';
 import { logger } from '@/utils/logger';
+import { isGeckoView } from '@/utils/nativeBridge';
 import { schedulePreloadLyric } from './utils/preloadLyric';
 import './style.css';
 
@@ -18,21 +19,23 @@ const pinia = createPinia();
 const _originalSetItem = localStorage.setItem.bind(localStorage);
 localStorage.setItem = function geckoViewSetItem(key: string, value: string) {
   _originalSetItem(key, value);
-  try {
-    const result = window.prompt(
-      '__native__',
-      `native://persistStore?storeId=${encodeURIComponent(key)}&data=${encodeURIComponent(value)}`,
-    );
-    if (result) {
-      try {
-        const parsed = JSON.parse(result);
-        if (parsed?.__nativeError) {
-          logger.error('App', `persistStore failed for ${key}: ${parsed.__nativeError}`);
-        }
-      } catch {}
+  if (isGeckoView) {
+    try {
+      const result = window.prompt(
+        '__native__',
+        `native://persistStore?storeId=${encodeURIComponent(key)}&data=${encodeURIComponent(value)}`,
+      );
+      if (result) {
+        try {
+          const parsed = JSON.parse(result);
+          if (parsed?.__nativeError) {
+            logger.error('App', `persistStore failed for ${key}: ${parsed.__nativeError}`);
+          }
+        } catch {}
+      }
+    } catch {
+      // 桥不可用时静默失败（原生层 onPause 会通过 storeCache 兜底写盘）
     }
-  } catch {
-    // 桥不可用时静默失败（原生层 onPause 会通过 storeCache 兜底写盘）
   }
 };
 

@@ -170,14 +170,33 @@ const handlePlayAll = async () => {
   if (radios.length === 0) return;
 
   try {
-    const fmids = radios.map((r) => r.fmid).join(',');
-    const res = await getRadioSongs(fmids, 0);
-    const payload = Array.isArray(res?.data) ? res.data : [];
+    const seenIds = new Set<string>();
     const allSongs: Song[] = [];
-    for (const item of payload) {
-      const songsRaw = Array.isArray(item?.songs) ? item.songs : [];
-      allSongs.push(...songsRaw.map((s: unknown) => mapRadioSong(s)));
+
+    // 所有电台同时请求（每个电台加载 2 页），用 Promise.allSettled 容错
+    const results = await Promise.allSettled(
+      radios.flatMap((radio) => [
+        getRadioSongs(radio.fmid, 0),
+        getRadioSongs(radio.fmid, 20),
+      ]),
+    );
+
+    for (const result of results) {
+      if (result.status !== 'fulfilled') continue;
+      const payload = Array.isArray(result.value?.data) ? result.value.data : [];
+      for (const item of payload) {
+        const songsRaw = Array.isArray(item?.songs) ? item.songs : [];
+        for (const s of songsRaw) {
+          const song = mapRadioSong(s);
+          const key = String(song.id);
+          if (!seenIds.has(key)) {
+            seenIds.add(key);
+            allSongs.push(song);
+          }
+        }
+      }
     }
+
     if (allSongs.length > 0) {
       await replaceQueueAndPlay(playlistStore, playerStore, allSongs, 0, undefined, {
         queueId: 'queue:radio:all',
@@ -229,7 +248,7 @@ onMounted(() => {
       <template v-else>
         <SliverHeader
           typeLabel="RADIO"
-          title="电台"
+          title="音乐电台"
           :coverUrl="radioCoverSvg"
           :hasDetails="true"
           :expandedHeight="176"
@@ -239,24 +258,6 @@ onMounted(() => {
             <div class="flex flex-col gap-2">
               <div class="text-[13px] font-semibold text-text-secondary">发现好声音，随心听</div>
             </div>
-          </template>
-
-          <template #actions>
-            <Button variant="unstyled" size="none" @click="handlePlayAll" class="action-btn-play">
-              <Icon :icon="iconPlay" width="18" height="18" />
-              <span>播放</span>
-            </Button>
-          </template>
-
-          <template #collapsed-actions>
-            <Button
-              variant="unstyled"
-              size="none"
-              @click="handlePlayAll"
-              class="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-primary"
-            >
-              <Icon :icon="iconPlay" width="20" height="20" />
-            </Button>
           </template>
         </SliverHeader>
 
@@ -338,7 +339,7 @@ onMounted(() => {
               FM
             </div>
             <div class="min-w-0 flex-1">
-              <div class="text-[16px] font-extrabold text-text-main">电台</div>
+              <div class="text-[16px] font-extrabold text-text-main">音乐电台</div>
               <div class="flex items-center gap-3 mt-0.5 text-[11px] text-text-secondary/80">
                 <span class="inline-flex items-center gap-1">
                   <Icon :icon="iconDeviceSpeaker" width="11" height="11" />
@@ -350,13 +351,6 @@ onMounted(() => {
 
           <div class="flex items-center gap-1.5 mt-2.5">
             <span class="px-2 py-0.5 rounded text-[10px] font-bold tracking-[0.8px] uppercase text-primary bg-primary/10 border border-primary/15">RADIO</span>
-          </div>
-
-          <div class="mt-2.5">
-            <Button variant="unstyled" size="none" @click="handlePlayAll" class="action-btn-play">
-              <Icon :icon="iconPlay" width="18" height="18" />
-              <span>播放</span>
-            </Button>
           </div>
         </div>
 

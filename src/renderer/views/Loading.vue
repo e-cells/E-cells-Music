@@ -135,8 +135,12 @@ const initStatus = async () => {
   try {
     // 如果 API 地址未配置，跳转到初始化页面
     if (!settingStore.apiBaseUrl?.trim()) {
-      router.replace('/setup');
-      return;
+      // 检查 .env 是否有默认值
+      const envBase = (import.meta.env.VITE_API_BASE_URL || '').trim();
+      if (!envBase) {
+        router.replace('/setup');
+        return;
+      }
     }
 
     // 在线后端模式：跳过本地 API server 初始化，直接进入设备注册和播放引擎检查

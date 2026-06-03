@@ -28,6 +28,8 @@ export interface PagedLoaderOptions<T> {
   logTag?: string;
   /** 最大页数限制，默认 100 */
   maxPages?: number;
+  /** 首批加载页数，默认 1。设为 3 可在首屏同时加载 3 页以加快展示 */
+  initialPages?: number;
 }
 
 /**
@@ -55,6 +57,7 @@ export class PagedSongLoader<T> {
   private readonly onError: PagedLoaderOptions<T>['onError'];
   private readonly logTag: string;
   private readonly maxPages: number;
+  private readonly initialPages: number;
 
   constructor(fetcher: PageFetcher<T>, options: PagedLoaderOptions<T> = {}) {
     this.fetcher = fetcher;
@@ -66,6 +69,7 @@ export class PagedSongLoader<T> {
     this.onError = options.onError;
     this.logTag = options.logTag ?? 'PagedLoader';
     this.maxPages = options.maxPages ?? 100;
+    this.initialPages = options.initialPages ?? 1;
   }
 
   /** 当前已加载的数据（只读） */
@@ -99,37 +103,65 @@ export class PagedSongLoader<T> {
   }
 
   /**
-   * 加载首页数据
-   * 快速返回第一页结果，供 UI 立即渲染
+   * 加载首页数据（支持多页并发首批加载）
+   * 快速返回首批结果，供 UI 立即渲染
    */
   async loadFirstPage(): Promise<readonly T[]> {
     if (this._aborted) return this._items;
     this._loading = true;
 
     try {
-      const { items, hasMore } = await this.fetcher(1, this.pageSize);
+      const pageNumbers = Array.from(
+        { length: Math.min(this.initialPages, this.maxPages) },
+        (_, i) => i + 1,
+      );
+
+      const results = await Promise.allSettled(
+        pageNumbers.map((page) => this.fetcher(page, this.pageSize)),
+      );
+
       if (this._aborted) return this._items;
 
-      const deduped = this.deduplicateAndAppend(items);
-      this._loadedPages = 1;
+      let lastHasMore = false;
 
-      if (deduped.length > 0) {
-        this.onPageLoaded?.(this._items, deduped, 1);
+      for (let i = 0; i < results.length; i++) {
+        const result = results[i];
+        if (result.status === 'rejected') {
+          logger.warn(this.logTag, `Initial page ${pageNumbers[i]} failed:`, result.reason);
+          break;
+        }
+
+        const { items, hasMore } = result.value;
+        if (this._aborted) return this._items;
+
+        const deduped = this.deduplicateAndAppend(items);
+        this._loadedPages = pageNumbers[i];
+        lastHasMore = hasMore;
+
+        if (deduped.length > 0) {
+          this.onPageLoaded?.(this._items, deduped, pageNumbers[i]);
+        }
+
+        // 空数据或无更多页则提前结束
+        if (items.length === 0 || !hasMore) {
+          this.markComplete();
+          return this._items;
+        }
       }
 
-      if (!hasMore) {
+      if (!lastHasMore) {
         this.markComplete();
       }
 
-      logger.info(this.logTag, `First page load finished`, {
+      logger.info(this.logTag, `Initial batch load finished`, {
+        pages: this._loadedPages,
         count: this._items.length,
-        hasMore,
       });
 
       return this._items;
     } catch (error) {
       if (!this._aborted) {
-        logger.warn(this.logTag, 'First page load failed:', error);
+        logger.warn(this.logTag, 'Initial batch load failed:', error);
         this.onError?.(error);
         this.markComplete();
       }

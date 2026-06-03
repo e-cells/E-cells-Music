@@ -39,6 +39,9 @@ const getApiBaseUrl = (): string => {
   } catch {
     // store not available
   }
+  // 回退到 .env 文件中的配置
+  const envBase = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+  if (envBase) return envBase;
   return '';
 };
 

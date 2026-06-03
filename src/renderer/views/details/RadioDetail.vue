@@ -3,8 +3,9 @@ defineOptions({ name: 'radio-detail' });
 import { ref, shallowRef, onMounted, onBeforeUnmount, computed } from 'vue';
 import { useRoute } from 'vue-router';
 import { useRouteId } from '@/utils/useRouteId';
-import { getRadioSongs } from '@/api/radio';
+import { getRadioSongs, consumePrefetch } from '@/api/radio';
 import { mapRadioSong } from '@/utils/mappers';
+import { loadRadioSongs, saveRadioSongs } from '@/utils/radioCache';
 import type { Song } from '@/models/song';
 import type { RadioMeta } from '@/models/radio';
 import SliverHeader from '@/components/music/DetailPageSliverHeader.vue';
@@ -101,6 +102,48 @@ const sortedSongs = computed(() => {
   });
 });
 
+/**
+ * 创建 PagedSongLoader 的通用工厂函数
+ * @param silent 静默模式：后台刷新时不弹错误 toast（路径1/2使用）
+ */
+const createLoader = (
+  fmid: number,
+  opts: {
+    onPageLoaded?: (allItems: readonly Song[]) => void;
+    onComplete?: (allItems: readonly Song[]) => void;
+    silent?: boolean;
+  },
+) =>
+  new PagedSongLoader<Song>(
+    async (page, pageSize) => {
+      const fmoffset = (page - 1) * pageSize;
+      const res = await getRadioSongs(fmid, fmoffset);
+      const payload = Array.isArray(res?.data) ? res.data : [];
+      const songsRaw =
+        payload.length > 0 && Array.isArray(payload[0]?.songs)
+          ? payload[0].songs
+          : [];
+      if (songsRaw.length === 0) return { items: [], hasMore: false };
+      const mapped = songsRaw.map((item: unknown) => mapRadioSong(item));
+      const hasMore = songsRaw.length >= pageSize;
+      return { items: mapped, hasMore };
+    },
+    {
+      pageSize: 20,
+      concurrency: 5,
+      initialPages: 5,
+      dedupeKey: (song) => String(song.id),
+      logTag: 'RadioDetailLoader',
+      onPageLoaded: opts.onPageLoaded,
+      onComplete: opts.onComplete,
+      onError() {
+        if (!opts.silent) {
+          toastStore.loadFailed('电台歌曲');
+        }
+      },
+    },
+  );
+
 const fetchData = async () => {
   loading.value = true;
   songs.value = [];
@@ -122,30 +165,134 @@ const fetchData = async () => {
     songLoader.abort();
   }
 
-  songLoader = new PagedSongLoader<Song>(
-    async (page, pageSize) => {
-      const fmoffset = (page - 1) * pageSize;
-      const res = await getRadioSongs(fmid, fmoffset);
-      const payload = Array.isArray(res?.data) ? res.data : [];
-      const songsRaw =
-        payload.length > 0 && Array.isArray(payload[0]?.songs)
-          ? payload[0].songs
+  try {
+    // ═══ 路径 1：持久化缓存命中 → 瞬间展示，后台全量刷新 ═══
+    const diskSongs = loadRadioSongs(fmid);
+    if (diskSongs && diskSongs.length > 0) {
+      songs.value = diskSongs.slice();
+      loading.value = false;
+
+      // 后台全量刷新：从 API 重新加载所有歌曲
+      // onPageLoaded 不更新显示，避免缓存与 API 数据差异导致条数跳动
+      // silent: true → 后台刷新失败不弹 toast，保留缓存数据
+      const diskSongsCount = diskSongs.length;
+      songLoader = createLoader(fmid, {
+        silent: true,
+        onComplete(allItems) {
+          // 以 API 返回的最新全量数据为准，更新列表和缓存
+          songs.value = allItems.slice();
+          saveRadioSongs(fmid, allItems.slice());
+          if (radioMeta.value) {
+            radioMeta.value = {
+              ...radioMeta.value,
+              description: radioMeta.value.description || `共 ${allItems.length} 首`,
+            };
+          }
+          // 新歌提示
+          const newCount = allItems.length - diskSongsCount;
+          if (newCount > 0) {
+            toastStore.success(`已更新 ${newCount} 首新歌曲`);
+          }
+          // 如果用户已在播放该电台，同步更新播放队列
+          const queueId = `queue:radio:${fmid}`;
+          if (playlistStore.activeQueueId === queueId) {
+            playlistStore.setPlaybackQueueWithOptions(
+              allItems.slice() as Song[],
+              0,
+              {
+                queueId,
+                title: radioMeta.value?.name || '电台',
+                subtitle: '电台',
+                type: 'radio',
+                dynamic: true,
+              },
+            );
+          }
+        },
+      });
+      void songLoader.loadFirstPage().then(() => {
+        if (!songLoader?.fullyLoaded) void songLoader?.loadRemaining();
+      });
+      return;
+    }
+
+    // ═══ 路径 2：预加载缓存命中 → 零等待展示前 60 首 ═══
+    const prefetched = await consumePrefetch(fmid);
+    if (prefetched) {
+      const seenIds = new Set<string>();
+      const initialSongs: Song[] = [];
+
+      for (const res of prefetched) {
+        const payload = Array.isArray((res as Record<string, unknown>)?.data)
+          ? (res as Record<string, unknown>).data
           : [];
-      if (songsRaw.length === 0) return { items: [], hasMore: false };
-      const mapped = songsRaw.map((item: unknown) => mapRadioSong(item));
-      const hasMore = songsRaw.length >= pageSize;
-      return { items: mapped, hasMore };
-    },
-    {
-      pageSize: 20,
-      concurrency: 1,
-      dedupeKey: (song) => String(song.id),
-      logTag: 'RadioDetailLoader',
+        for (const item of payload as Record<string, unknown>[]) {
+          const songsRaw = Array.isArray(item?.songs) ? item.songs : [];
+          for (const s of songsRaw) {
+            const song = mapRadioSong(s);
+            const key = String(song.id);
+            if (!seenIds.has(key)) {
+              seenIds.add(key);
+              initialSongs.push(song);
+            }
+          }
+        }
+      }
+
+      songs.value = initialSongs;
+      loading.value = false;
+
+      // 后台加载全部数据（从第 1 页开始，loader 内部会去重已有的）
+      // silent: true → 已有预加载数据展示，后台失败不弹 toast
+      songLoader = createLoader(fmid, {
+        silent: true,
+        onPageLoaded(allItems) {
+          // 合并预加载歌曲和后续歌曲
+          const mergedSeen = new Set(seenIds);
+          const merged = [...initialSongs];
+          for (const song of allItems) {
+            const key = String(song.id);
+            if (!mergedSeen.has(key)) {
+              mergedSeen.add(key);
+              merged.push(song);
+            }
+          }
+          songs.value = merged;
+        },
+        onComplete(allItems) {
+          const mergedSeen = new Set(seenIds);
+          const merged = [...initialSongs];
+          for (const song of allItems) {
+            const key = String(song.id);
+            if (!mergedSeen.has(key)) {
+              mergedSeen.add(key);
+              merged.push(song);
+            }
+          }
+          songs.value = merged;
+          saveRadioSongs(fmid, merged);
+          if (radioMeta.value) {
+            radioMeta.value = {
+              ...radioMeta.value,
+              description: radioMeta.value.description || `共 ${merged.length} 首`,
+            };
+          }
+        },
+      });
+      void songLoader.loadFirstPage().then(() => {
+        if (!songLoader?.fullyLoaded) void songLoader?.loadRemaining();
+      });
+      return;
+    }
+
+    // ═══ 路径 3：全部未命中 → 正常并发加载 ═══
+    songLoader = createLoader(fmid, {
       onPageLoaded(allItems) {
         songs.value = allItems.slice();
       },
       onComplete(allItems) {
         songs.value = allItems.slice();
+        saveRadioSongs(fmid, allItems.slice());
         if (radioMeta.value) {
           radioMeta.value = {
             ...radioMeta.value,
@@ -153,13 +300,8 @@ const fetchData = async () => {
           };
         }
       },
-      onError() {
-        toastStore.loadFailed('电台歌曲');
-      },
-    },
-  );
+    });
 
-  try {
     await songLoader.loadFirstPage();
     loading.value = false;
 
@@ -167,20 +309,30 @@ const fetchData = async () => {
       void songLoader.loadRemaining();
     }
   } catch {
-    toastStore.loadFailed('电台歌曲');
+    // 只在没有任何数据时才报错（有缓存或预加载数据时静默失败）
+    if (songs.value.length === 0) {
+      toastStore.loadFailed('电台歌曲');
+    }
     loading.value = false;
   }
 };
 
 const handleSongDoubleTapPlay = async (song: Song) => {
   try {
-    await replaceQueueAndPlay(playlistStore, playerStore, songs.value, 0, song, {
-      queueId: `queue:radio:${radioMeta.value?.fmid ?? getFmid()}`,
+    const fmid = radioMeta.value?.fmid ?? getFmid();
+    const queueOpts = {
+      queueId: `queue:radio:${fmid}`,
       title: radioMeta.value?.name || '电台',
       subtitle: '电台',
       type: 'radio',
       dynamic: true,
-    });
+    };
+    await replaceQueueAndPlay(playlistStore, playerStore, songs.value, 0, song, queueOpts);
+    // 如果仍在后台加载，静默等待全部歌曲并更新播放队列
+    if (songLoader && !songLoader.fullyLoaded) {
+      const allSongs = await songLoader.waitForAll();
+      playlistStore.setPlaybackQueueWithOptions(allSongs.slice() as Song[], 0, queueOpts);
+    }
   } catch {
     toastStore.actionFailed('播放');
   }
@@ -189,8 +341,9 @@ const handleSongDoubleTapPlay = async (song: Song) => {
 const handlePlayAll = async () => {
   if (songs.value.length === 0) return;
   try {
+    const fmid = radioMeta.value?.fmid ?? getFmid();
     const queueOpts = {
-      queueId: `queue:radio:${radioMeta.value?.fmid ?? getFmid()}`,
+      queueId: `queue:radio:${fmid}`,
       title: radioMeta.value?.name || '电台',
       subtitle: '电台',
       type: 'radio' as const,
@@ -200,9 +353,8 @@ const handlePlayAll = async () => {
     // 如果仍在后台加载，静默等待全部歌曲并更新播放队列
     if (songLoader && !songLoader.fullyLoaded) {
       const allSongs = await songLoader.waitForAll();
-      if (allSongs.length > songs.value.length) {
-        playlistStore.setPlaybackQueueWithOptions(allSongs.slice() as Song[], 0, queueOpts);
-      }
+      // 不管数量是否变化，都更新播放队列为最新完整数据
+      playlistStore.setPlaybackQueueWithOptions(allSongs.slice() as Song[], 0, queueOpts);
     }
   } catch {
     toastStore.actionFailed('播放');

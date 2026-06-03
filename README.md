@@ -67,7 +67,7 @@
    
 #### 🐳 极速部署教程 (Docker)
 
-你可以根据实际情况，选择使用 Docker CLI 或 Docker Compose 来启动服务，启动后，API 服务将运行在宿主机的 `8542` 端口。
+你可以根据实际情况，选择使用 Docker CLI 或 Docker Compose 来启动服务，启动后，API 服务将运行在宿主机的 `8542` 端口,以下镜像是我根据原项目[MakcRe/KuGouMusicApi](https://github.com/MakcRe/KuGouMusicApi)自己构建的。
 
 ### 方式一：使用 Docker CLI 极速运行
 使用以下命令一键启动。此命令默认启用了 （酷狗概念版数据源，兼容性更好），并将容器内的 3000 端口映射到宿主机的 3000 端口：

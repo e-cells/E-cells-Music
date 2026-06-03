@@ -155,8 +155,8 @@ public class MainActivity extends AppCompatActivity {
             if (runtime == null) {
                 org.mozilla.geckoview.ContentBlocking.Settings cbSettings =
                     new org.mozilla.geckoview.ContentBlocking.Settings.Builder()
-                        .antiTracking(org.mozilla.geckoview.ContentBlocking.AntiTracking.STRICT)
-                        .strictSocialTrackingProtection(true)
+                        .antiTracking(org.mozilla.geckoview.ContentBlocking.AntiTracking.NONE)
+                        .strictSocialTrackingProtection(false)
                         .build();
                 runtime = GeckoRuntime.create(this,
                     new GeckoRuntimeSettings.Builder()

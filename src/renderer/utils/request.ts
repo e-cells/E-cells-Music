@@ -148,21 +148,36 @@ const httpOnlineRequest = async (
 
   const fetchOptions: RequestInit = {
     method,
-    headers: {
-      'Content-Type': 'application/json',
-      ...headers,
-    },
+    headers,
   };
 
+  // 仅在有请求体时设置 Content-Type（GET 请求不应设置，避免不必要的 CORS 预检）
   if (config?.data && method !== 'GET') {
+    fetchOptions.headers = {
+      'Content-Type': 'application/json',
+      ...headers,
+    };
     fetchOptions.body = JSON.stringify(config.data);
   }
 
+  // 设置请求超时，防止请求无限挂起阻塞 Promise.allSettled
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30_000);
+
+  // 合并外部 signal（用户主动取消）和超时 signal
   if (config?.signal) {
-    fetchOptions.signal = config.signal;
+    config.signal.addEventListener('abort', () => controller.abort());
   }
 
-  const response = await fetch(fullUrl.toString(), fetchOptions);
+  fetchOptions.signal = controller.signal;
+
+  let response: Response;
+  try {
+    response = await fetch(fullUrl.toString(), fetchOptions);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
   let body: any;
   try {
     body = await response.json();

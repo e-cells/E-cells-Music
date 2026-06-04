@@ -1,0 +1,50 @@
+# ── Dependencies ──
+node_modules/
+
+# ── Build outputs ──
+dist/
+.vite/
+
+# ── Android ──
+android/build/
+android/app/build/
+android/.gradle/
+android/local.properties
+
+# ── Signing keys ──
+*.jks
+*.keystore
+签名/
+**/签名/
+
+# ── IDE / Editor ──
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+
+# ── OS ──
+.DS_Store
+Thumbs.db
+ehthumbs.db
+
+# ── Environment ──
+.env
+.env.local
+.env.*.local
+
+# ── Logs ──
+*.log
+npm-debug.log*
+
+# 忽略 Claude 本地配置
+.claude/
+.omo/
+
+#忽略APK文件夹
+APK/
+
+#忽略后端API文档
+后端API文档.md

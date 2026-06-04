@@ -127,13 +127,14 @@ const collectSourcesFromMvRecord = (record: UnknownRecord): VideoSource[] => {
     { key: 'mkv', label: 'MKV' },
   ];
 
+  const allSources: VideoSource[] = [];
   for (const codec of codecMap) {
     const codecRecord = toRecord(record[codec.key]);
-    const source = pickFirstSourceFromCodecMap(codecRecord, codec.label, thumb);
-    if (source) return [source];
+    const sources = buildSourceListFromCodecMap(codecRecord, codec.label, thumb);
+    allSources.push(...sources);
   }
 
-  return [];
+  return allSources;
 };
 
 const resolveMvRecords = (payload: unknown): UnknownRecord[] => {
@@ -242,14 +243,29 @@ export const mapVideoMetaList = (payload: unknown): VideoMeta[] => {
     .filter((item): item is VideoMeta => item !== null);
 };
 
-export const extractVideoUrl = (payload: unknown, targetHash = ''): string => {
+/**
+ * 从 API 响应中提取视频播放地址
+ * @param preferStreaming 移动端优先选 play_url（流式播放优化），桌面端优先选 downurl（下载链接）
+ */
+export const extractVideoUrl = (payload: unknown, targetHash = '', preferStreaming = false): string => {
   const root = toRecord(payload);
   const data = toRecord(root.data);
   const lowerHash = targetHash.trim().toLowerCase();
   const candidate = lowerHash && isRecord(data[lowerHash]) ? toRecord(data[lowerHash]) : null;
   const entry = candidate ?? (Object.keys(data)[0] ? toRecord(data[Object.keys(data)[0]]) : {});
   const backup = Array.isArray(entry.backupdownurl) ? entry.backupdownurl[0] : undefined;
-  return readString(entry.downurl ?? entry.url ?? entry.play_url ?? backup, '');
+
+  const downurl = readString(entry.downurl, '');
+  const url = readString(entry.url, '');
+  const playUrl = readString(entry.play_url, '');
+  const backupUrl = readString(backup, '');
+
+  if (preferStreaming) {
+    // 移动端：优先使用流式播放地址
+    return playUrl || url || downurl || backupUrl;
+  }
+  // 桌面端：优先使用下载地址（带宽更高）
+  return downurl || url || playUrl || backupUrl;
 };
 
 export const mapVideoSourcesFromPrivilege = (payload: unknown): VideoSource[] => {

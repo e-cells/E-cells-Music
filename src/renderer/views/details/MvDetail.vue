@@ -14,14 +14,17 @@ import {
   mergeVideoSources,
 } from '@/utils/mappers/video';
 import { usePlayerStore } from '@/stores/player';
+import { useSettingStore } from '@/stores/setting';
+import { iconFullscreen, iconExitFullscreen, iconPlay, iconPause } from '@/icons';
 
 // 引入 Native 桥接工具与物理返回键拦截钩子
-import { isGeckoView, NativeOrientationBridge } from '@/utils/nativeBridge';
+import { isGeckoView, NativeOrientationBridge, NativeDecoderBridge } from '@/utils/nativeBridge';
 import { useHardwareBack } from '@/composables/useHardwareBack';
 
 const route = useRoute();
 const toastStore = useToastStore();
 const playerStore = usePlayerStore();
+const settingStore = useSettingStore();
 
 const videoRef = ref<HTMLVideoElement | null>(null);
 const loading = ref(false);
@@ -32,6 +35,159 @@ const currentVersionIndex = ref(0);
 const currentSourceHash = ref('');
 const currentVideoUrl = ref('');
 const playbackError = ref('');
+
+// === 伪全屏状态控制 ===
+const isPseudoFullscreen = ref(false);
+
+const togglePseudoFullscreen = async () => {
+  const isMobileNative = isGeckoView || /Android/i.test(navigator.userAgent);
+  if (isPseudoFullscreen.value) {
+    // 退出伪全屏
+    isPseudoFullscreen.value = false;
+    document.documentElement.style.overflow = '';
+    if (isMobileNative) {
+      void NativeOrientationBridge.setFullScreen(false);
+      void NativeOrientationBridge.setOrientation(settingStore.screenOrientation);
+    }
+  } else {
+    // 进入伪全屏：先调用原生 API 强制横屏，等待生效后再应用 CSS 全屏
+    if (isMobileNative) {
+      void NativeOrientationBridge.setFullScreen(true);
+      void NativeOrientationBridge.setOrientation('landscape');
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    isPseudoFullscreen.value = true;
+    document.documentElement.style.overflow = 'hidden';
+  }
+};
+
+// === 自定义控制栏（Android 端） ===
+const showControls = ref(true);
+let controlsTimer: ReturnType<typeof setTimeout> | null = null;
+const currentTime = ref(0);
+const duration = ref(0);
+const progressBarRef = ref<HTMLDivElement | null>(null);
+const isDragging = ref(false);
+
+const formatTime = (seconds: number): string => {
+  if (!isFinite(seconds) || seconds < 0) return '0:00';
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+};
+
+const progressPercent = computed(() => {
+  if (duration.value <= 0) return 0;
+  return (currentTime.value / duration.value) * 100;
+});
+
+const handleTimeUpdateForControls = () => {
+  if (!isDragging.value && videoRef.value) {
+    currentTime.value = videoRef.value.currentTime;
+    duration.value = videoRef.value.duration || 0;
+  }
+};
+
+const handleLoadedMetadata = () => {
+  if (videoRef.value) {
+    duration.value = videoRef.value.duration || 0;
+  }
+};
+
+const resetControlsTimer = () => {
+  showControls.value = true;
+  if (controlsTimer) clearTimeout(controlsTimer);
+  controlsTimer = setTimeout(() => {
+    if (videoRef.value && !videoRef.value.paused) {
+      showControls.value = false;
+    }
+  }, 3000);
+};
+
+const toggleVideoPlay = (e?: Event) => {
+  e?.stopPropagation();
+  const video = videoRef.value;
+  if (!video || loading.value || sourceLoading.value) return;
+  if (video.paused) {
+    video.play().catch(() => {});
+  } else {
+    video.pause();
+  }
+};
+
+const getProgressFromEvent = (e: MouseEvent | TouchEvent): number => {
+  const el = progressBarRef.value;
+  if (!el) return 0;
+  const rect = el.getBoundingClientRect();
+  const clientX = 'touches' in e ? e.touches[0]?.clientX ?? e.changedTouches[0]?.clientX : e.clientX;
+  if (clientX === undefined) return 0;
+  const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+  return ratio * (duration.value || 0);
+};
+
+const applySeek = (time: number) => {
+  const video = videoRef.value;
+  if (!video) return;
+  video.currentTime = time;
+  currentTime.value = time;
+};
+
+const handleProgressPointerDown = (e: MouseEvent | TouchEvent) => {
+  e.preventDefault();
+  isDragging.value = true;
+  const time = getProgressFromEvent(e);
+  applySeek(time);
+  resetControlsTimer();
+};
+
+const handleProgressPointerMove = (e: MouseEvent | TouchEvent) => {
+  if (!isDragging.value) return;
+  const time = getProgressFromEvent(e);
+  currentTime.value = time;
+};
+
+const handleProgressPointerUp = (e: MouseEvent | TouchEvent) => {
+  if (!isDragging.value) return;
+  isDragging.value = false;
+  const time = getProgressFromEvent(e);
+  applySeek(time);
+};
+
+const cleanupDragListeners = () => {
+  isDragging.value = false;
+  document.removeEventListener('mousemove', handleProgressPointerMove);
+  document.removeEventListener('mouseup', handleProgressPointerUp);
+  document.removeEventListener('touchmove', handleProgressPointerMove);
+  document.removeEventListener('touchend', handleProgressPointerUp);
+};
+
+const setupDragListeners = () => {
+  document.addEventListener('mousemove', handleProgressPointerMove);
+  document.addEventListener('mouseup', handleProgressPointerUp);
+  document.addEventListener('touchmove', handleProgressPointerMove, { passive: false });
+  document.addEventListener('touchend', handleProgressPointerUp);
+};
+
+// === 解码能力检测 ===
+const decoderCapabilities = ref<string[]>([]);
+
+const fetchDecoderCapabilities = async () => {
+  if (!isGeckoView) return;
+  try {
+    const result = await NativeDecoderBridge.getCapabilities();
+    if (result?.codecs?.length) {
+      decoderCapabilities.value = result.codecs;
+    }
+  } catch {
+    // 检测失败时使用默认兼容策略
+  }
+};
+
+const compatibleSources = computed(() => {
+  const sources = meta.value?.sources ?? [];
+  if (!decoderCapabilities.value.length) return sources;
+  return sources.filter((s) => s.codec && decoderCapabilities.value.includes(s.codec));
+});
 
 const routeHash = computed(() => String(route.query.hash ?? route.params.id ?? '').trim());
 const routeVideoId = computed(() => String(route.query.videoId ?? route.params.id ?? '').trim());
@@ -118,11 +274,38 @@ const mergeMeta = (nextMeta: VideoMeta | null) => {
   };
 };
 
+// 车机环境优先选 H.264 编码片源（兼容性最好）
+const isMobileNative = isGeckoView || /Android/i.test(navigator.userAgent);
+
+const pickPreferredSource = (sources: VideoSource[]): VideoSource | null => {
+  if (!sources.length) return null;
+  if (isMobileNative) {
+    const h264 = sources.find((s) => s.codec === 'H.264');
+    if (h264) return h264;
+  }
+  return sources[0];
+};
+
 const syncCurrentSource = () => {
   if (!meta.value) return;
   const sources = meta.value.sources ?? [];
-  const target =
-    sources.find((item) => item.hash === currentSourceHash.value) ?? sources[0] ?? null;
+
+  // 如果当前 hash 仍在可用片源中，检查是否需要升级到 H.264
+  if (currentSourceHash.value && sources.some((s) => s.hash === currentSourceHash.value)) {
+    if (!isMobileNative) return;
+    const current = sources.find((s) => s.hash === currentSourceHash.value);
+    // 车机环境：当前是 H.265 且有 H.264 替代品时自动切换
+    if (current?.codec === 'H.265') {
+      const h264 = sources.find((s) => s.codec === 'H.264');
+      if (h264) {
+        currentSourceHash.value = h264.hash;
+        return;
+      }
+    }
+    return;
+  }
+
+  const target = pickPreferredSource(sources);
   currentSourceHash.value = target?.hash ?? '';
 };
 
@@ -131,27 +314,51 @@ const pauseMusicPlayback = async () => {
   await playerStore.togglePlay().catch(() => undefined);
 };
 
+// === 视频加载：防止并发，旧调用自动作废 ===
+let loadVideoGeneration = 0;
+
 const loadVideoUrl = async (hash: string) => {
   if (!hash) return;
+  const gen = ++loadVideoGeneration;
   sourceLoading.value = true;
   playbackError.value = '';
+  decodeCheckDone = false;
+
+  let decodeTimeout: ReturnType<typeof setTimeout> | null = null;
+
   try {
     const response = await getVideoUrl(hash);
-    const url = extractVideoUrl(response, hash);
+    if (gen !== loadVideoGeneration) return;
+    const url = extractVideoUrl(response, hash, isMobileNative);
     if (!url) throw new Error('empty-url');
     currentVideoUrl.value = url;
     await nextTick();
+    if (gen !== loadVideoGeneration) return;
     if (videoRef.value) {
       await pauseMusicPlayback();
       videoRef.value.load();
+      // 解码快速探测：2 秒内无画面则自动降级
+      if (isMobileNative) {
+        decodeTimeout = setTimeout(() => {
+          if (gen !== loadVideoGeneration) return;
+          const v = videoRef.value;
+          if (v && v.videoWidth === 0 && v.videoHeight === 0 && !playbackError.value) {
+            handleVideoError();
+          }
+        }, 2000);
+      }
       await videoRef.value.play().catch(() => undefined);
     }
   } catch {
+    if (gen !== loadVideoGeneration) return;
     currentVideoUrl.value = '';
     playbackError.value = '当前视频暂时无法播放';
     toastStore.loadFailed('MV');
   } finally {
-    sourceLoading.value = false;
+    if (decodeTimeout) clearTimeout(decodeTimeout);
+    if (gen === loadVideoGeneration) {
+      sourceLoading.value = false;
+    }
   }
 };
 
@@ -165,14 +372,16 @@ const applySources = (sources: VideoSource[]) => {
 };
 
 const applyVersion = (nextMeta: VideoMeta) => {
+  const sources = nextMeta.sources ?? [];
   meta.value = {
     ...buildInitialMeta(),
     ...nextMeta,
-    sources: nextMeta.sources ?? [],
+    sources,
   };
-  currentSourceHash.value = nextMeta.sources?.[0]?.hash ?? nextMeta.hash ?? '';
+  currentSourceHash.value = pickPreferredSource(sources)?.hash ?? nextMeta.hash ?? '';
   currentVideoUrl.value = '';
   playbackError.value = '';
+  failedSourceHashes.value.clear();
 };
 
 const fetchMvMeta = async () => {
@@ -180,6 +389,7 @@ const fetchMvMeta = async () => {
   meta.value = buildInitialMeta();
   mvVersions.value = [];
   currentVersionIndex.value = 0;
+  failedSourceHashes.value.clear();
   try {
     const tasks: Promise<unknown>[] = [];
     if (routeAlbumAudioId.value) tasks.push(getSongMv(routeAlbumAudioId.value));
@@ -210,13 +420,49 @@ const fetchMvMeta = async () => {
   }
 };
 
+// === 解码失败自动降级 ===
+const failedSourceHashes = ref(new Set<string>());
+let decodeCheckDone = false;
+
 const handleVideoError = () => {
-  playbackError.value = '视频解码失败，请切换其他片源';
+  failedSourceHashes.value.add(currentSourceHash.value);
+
+  const sources = meta.value?.sources ?? [];
+  // 优先切换到不同编解码器的片源（如 H.265 → H.264），跳过同编解码器的低分辨率
+  const currentSource = sources.find((s) => s.hash === currentSourceHash.value);
+  const currentCodec = currentSource?.codec;
+  const differentCodec = sources.find(
+    (s) => !failedSourceHashes.value.has(s.hash) && s.codec !== currentCodec,
+  );
+  const nextSource = differentCodec ?? sources.find((s) => !failedSourceHashes.value.has(s.hash));
+
+  if (nextSource) {
+    toastStore.show(`当前片源播放失败，正在切换到 ${nextSource.label}${nextSource.codec ? ` ${nextSource.codec}` : ''}...`);
+    changeSource(nextSource.hash);
+  } else {
+    playbackError.value = '视频解码失败，所有片源均无法播放';
+  }
+};
+
+// 检测"有进度条无画面"：H.265 在不支持的车机上会播放音频但 videoWidth 永远为 0
+const handleVideoTimeUpdate = () => {
+  // 正在加载新片源时跳过，避免旧视频事件的竞态误判
+  if (decodeCheckDone || sourceLoading.value) return;
+  const video = videoRef.value;
+  if (!video || video.currentTime <= 0) return;
+
+  decodeCheckDone = true;
+
+  // 有播放进度但视频帧尺寸为 0 → 编解码器不支持
+  if (video.videoWidth === 0 || video.videoHeight === 0) {
+    handleVideoError();
+  }
 };
 
 const changeSource = (hash: string) => {
   if (!hash || hash === currentSourceHash.value) return;
   currentSourceHash.value = hash;
+  decodeCheckDone = false;
 };
 
 const handleVideoPlay = () => {
@@ -241,29 +487,10 @@ const switchVersion = (offset: -1 | 1) => {
   applyVersion(nextMeta);
 };
 
-// === 增强：处理物理返回键 ===
-useHardwareBack(() => true, () => {
-  const isFs = !!(
-    document.fullscreenElement || 
-    (document as any).mozFullScreenElement || 
-    (document as any).webkitFullscreenElement ||
-    (videoRef.value && (videoRef.value as any).webkitDisplayingFullscreen)
-  );
-  
-  if (isFs) {
-    // 按返回键时主动退出全屏
-    if (document.exitFullscreen) {
-      document.exitFullscreen().catch(() => {});
-    } else if ((document as any).webkitExitFullscreen) {
-      (document as any).webkitExitFullscreen();
-    } else if ((document as any).mozCancelFullScreen) {
-      (document as any).mozCancelFullScreen();
-    } else if (videoRef.value && (videoRef.value as any).webkitExitFullscreen) {
-      (videoRef.value as any).webkitExitFullscreen();
-    }
-    return true; // 拦截路由返回
-  }
-  return false; 
+// === 增强：处理物理返回键（伪全屏时拦截） ===
+useHardwareBack(isPseudoFullscreen, () => {
+  togglePseudoFullscreen();
+  return true; // 拦截路由返回
 });
 
 // === 增强：处理 App 切换到后台的自动暂停 ===
@@ -273,95 +500,40 @@ const handleVisibilityChange = () => {
   }
 };
 
-// === 处理原生全屏与横竖屏切换逻辑 ===
-const handleFullscreenChange = () => {
-  // 增强兼容性：允许 GeckoView 同时也允许标准 Android WebView 触发此逻辑
-  const isMobileNative = isGeckoView || /Android/i.test(navigator.userAgent);
-  if (!isMobileNative) return;
-
-  const isFs = !!(
-    document.fullscreenElement ||
-    (document as any).mozFullScreenElement ||
-    (document as any).webkitFullscreenElement ||
-    (document as any).msFullscreenElement ||
-    (videoRef.value && (videoRef.value as any).webkitDisplayingFullscreen)
-  );
-
-  try {
-    if (isFs) {
-      // 强制横屏并进入系统级全屏（隐藏状态栏）
-      void NativeOrientationBridge.setFullScreen(true);
-      void NativeOrientationBridge.setOrientation('landscape');
-    } else {
-      // 恢复竖屏并退出系统级全屏
-      void NativeOrientationBridge.setFullScreen(false);
-      void NativeOrientationBridge.setOrientation('portrait');
-    }
-  } catch (error) {
-    console.warn('Native Bridge Call Failed:', error);
-  }
-};
 
 onMounted(async () => {
   meta.value = buildInitialMeta();
   await fetchMvMeta();
 
-  // 1. 挂载 Document 级别的全屏事件
-  document.addEventListener('fullscreenchange', handleFullscreenChange);
-  document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
-  document.addEventListener('mozfullscreenchange', handleFullscreenChange);
-  
-  // 2. 挂载 Video 元素级别的全屏事件 (防止部分定制 WebView 阻止事件冒泡)
-  if (videoRef.value) {
-    videoRef.value.addEventListener('fullscreenchange', handleFullscreenChange);
-    videoRef.value.addEventListener('webkitfullscreenchange', handleFullscreenChange);
-    videoRef.value.addEventListener('webkitbeginfullscreen', handleFullscreenChange); // 专为一些原生 Webkit 触发
-    videoRef.value.addEventListener('webkitendfullscreen', handleFullscreenChange);
-  }
-
-  // 挂载可见性监听
+  // 挂载可见性监听（App 切换到后台时自动暂停）
   document.addEventListener('visibilitychange', handleVisibilityChange);
+
+  // 检测设备视频解码能力
+  void fetchDecoderCapabilities();
+
+  // 进度条拖拽全局监听
+  if (isMobileNative) setupDragListeners();
 });
 
 onBeforeUnmount(() => {
   destroyVideoPlayer();
 
-  // 卸载事件监听
-  document.removeEventListener('fullscreenchange', handleFullscreenChange);
-  document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
-  document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
-  document.removeEventListener('visibilitychange', handleVisibilityChange);
-  
-  if (videoRef.value) {
-    videoRef.value.removeEventListener('fullscreenchange', handleFullscreenChange);
-    videoRef.value.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
-    videoRef.value.removeEventListener('webkitbeginfullscreen', handleFullscreenChange);
-    videoRef.value.removeEventListener('webkitendfullscreen', handleFullscreenChange);
-  }
+  // 清除控制栏定时器与拖拽监听
+  if (controlsTimer) clearTimeout(controlsTimer);
+  cleanupDragListeners();
 
-  // 强行退出 DOM 全屏状态
-  const isFs = !!(
-    document.fullscreenElement || 
-    (document as any).webkitFullscreenElement || 
-    (document as any).mozFullScreenElement
-  );
-  
-  if (isFs) {
-    try {
-      if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
-      else if ((document as any).webkitExitFullscreen) (document as any).webkitExitFullscreen();
-      else if ((document as any).mozCancelFullScreen) (document as any).mozCancelFullScreen();
-    } catch {
-      // ignore
+  // 退出伪全屏（如果激活）
+  if (isPseudoFullscreen.value) {
+    isPseudoFullscreen.value = false;
+    document.documentElement.style.overflow = '';
+    const isMobileNative = isGeckoView || /Android/i.test(navigator.userAgent);
+    if (isMobileNative) {
+      void NativeOrientationBridge.setFullScreen(false);
+      void NativeOrientationBridge.setOrientation(settingStore.screenOrientation);
     }
   }
 
-  // 恢复竖屏兜底
-  const isMobileNative = isGeckoView || /Android/i.test(navigator.userAgent);
-  if (isMobileNative) {
-    void NativeOrientationBridge.setFullScreen(false);
-    void NativeOrientationBridge.setOrientation('portrait');
-  }
+  document.removeEventListener('visibilitychange', handleVisibilityChange);
 });
 
 watch(
@@ -377,16 +549,18 @@ watch(
 <template>
   <div class="mv-page bg-bg-main min-h-full">
     <div class="mv-player-wrap">
-      <div class="mv-player-box">
+      <div class="mv-player-box" :class="{ 'is-pseudo-fullscreen': isPseudoFullscreen }" @mousemove="isMobileNative ? resetControlsTimer() : undefined" @touchstart="isMobileNative ? resetControlsTimer() : undefined">
         <video
           ref="videoRef"
           class="mv-video"
-          controls
+          :controls="!isMobileNative"
           preload="metadata"
           playsinline
           :poster="cover"
           @play="handleVideoPlay"
           @error="handleVideoError"
+          @timeupdate="handleVideoTimeUpdate; handleTimeUpdateForControls()"
+          @loadedmetadata="handleLoadedMetadata"
         >
           <source v-if="currentVideoUrl" :src="currentVideoUrl" />
         </video>
@@ -398,6 +572,36 @@ watch(
 
         <div v-else-if="!currentVideoUrl" class="mv-overlay-state">
           <span>{{ playbackError || '暂无可播放的视频' }}</span>
+        </div>
+
+        <button
+          type="button"
+          class="mv-fullscreen-btn"
+          @click.stop="togglePseudoFullscreen"
+        >
+          <Icon :icon="isPseudoFullscreen ? iconExitFullscreen : iconFullscreen" width="20" height="20" />
+        </button>
+
+        <div v-if="isMobileNative" class="mv-controls" :class="{ 'mv-controls--hidden': !showControls }">
+          <button type="button" class="mv-ctrl-play" @click.stop="toggleVideoPlay">
+            <Icon :icon="videoRef?.paused ? iconPlay : iconPause" width="20" height="20" />
+          </button>
+          <div
+            ref="progressBarRef"
+            class="mv-ctrl-progress"
+            @mousedown.prevent="handleProgressPointerDown"
+            @touchstart.prevent="handleProgressPointerDown"
+          >
+            <div class="mv-ctrl-progress-track">
+              <div class="mv-ctrl-progress-fill" :style="{ width: progressPercent + '%' }"></div>
+              <div
+                class="mv-ctrl-progress-thumb"
+                :class="{ 'mv-ctrl-progress-thumb--active': isDragging }"
+                :style="{ left: progressPercent + '%' }"
+              ></div>
+            </div>
+          </div>
+          <span class="mv-ctrl-time">{{ formatTime(currentTime) }} / {{ formatTime(duration) }}</span>
         </div>
       </div>
     </div>
@@ -535,6 +739,185 @@ watch(
   height: 100%;
   object-fit: contain;
   background: #000;
+}
+
+/* === 全屏切换按钮 === */
+.mv-fullscreen-btn {
+  position: absolute;
+  top: auto;
+  bottom: 50px;
+  right: 10px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: none;
+  background: rgba(0, 0, 0, 0.45);
+  color: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s ease, background 0.2s ease;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.mv-player-box:hover .mv-fullscreen-btn,
+.mv-fullscreen-btn:focus-visible {
+  opacity: 1;
+}
+
+.mv-fullscreen-btn:hover {
+  background: rgba(0, 0, 0, 0.65);
+}
+
+/* === CSS 伪全屏核心样式 === */
+.mv-player-box.is-pseudo-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+  margin: 0;
+  background: #000;
+}
+
+/* 伪全屏时按钮始终可见，尺寸更大 */
+.mv-player-box.is-pseudo-fullscreen .mv-fullscreen-btn {
+  opacity: 1;
+  top: auto;
+  bottom: 56px;
+  right: 16px;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.mv-player-box.is-pseudo-fullscreen .mv-fullscreen-btn:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+/* === 自定义控制栏（Android 端） === */
+.mv-controls {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.75));
+  opacity: 1;
+  transition: opacity 0.3s ease;
+}
+
+.mv-controls--hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.mv-ctrl-play {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: none;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.92);
+  cursor: pointer;
+  flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mv-ctrl-play:active {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.mv-ctrl-progress {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mv-ctrl-progress-track {
+  position: relative;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.mv-ctrl-progress-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.85);
+  transition: width 0.1s linear;
+}
+
+.mv-ctrl-progress-thumb {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.mv-ctrl-progress-thumb--active,
+.mv-ctrl-progress:hover .mv-ctrl-progress-thumb {
+  opacity: 1;
+}
+
+.mv-ctrl-time {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.75);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* 全屏模式下控制栏样式调整 */
+.mv-player-box.is-pseudo-fullscreen .mv-controls {
+  padding: 14px 20px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
+}
+
+.mv-player-box.is-pseudo-fullscreen .mv-ctrl-play {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+}
+
+.mv-player-box.is-pseudo-fullscreen .mv-ctrl-progress {
+  height: 32px;
+}
+
+.mv-player-box.is-pseudo-fullscreen .mv-ctrl-progress-track {
+  height: 5px;
+  border-radius: 3px;
+}
+
+.mv-player-box.is-pseudo-fullscreen .mv-ctrl-progress-thumb {
+  width: 14px;
+  height: 14px;
 }
 
 .mv-overlay-state {

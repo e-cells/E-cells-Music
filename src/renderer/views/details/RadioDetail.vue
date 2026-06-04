@@ -160,7 +160,7 @@ const fetchData = async () => {
     fmtype: 0,
   };
 
-  const fmid = getFmid();
+  const fmid = Number(getFmid());
 
   // 中止前一个加载器
   if (songLoader) {
@@ -326,7 +326,7 @@ const handleSongDoubleTapPlay = async (song: Song) => {
       queueId: `queue:radio:${fmid}`,
       title: radioMeta.value?.name || '电台',
       subtitle: '电台',
-      type: 'radio',
+      type: 'radio' as const,
       dynamic: true,
     };
     await replaceQueueAndPlay(playlistStore, playerStore, songs.value, 0, song, queueOpts);

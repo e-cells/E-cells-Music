@@ -14,6 +14,8 @@ import android.media.audiofx.Equalizer;
 import android.media.audiofx.BassBoost;
 import android.media.audiofx.Virtualizer;
 import android.media.audiofx.PresetReverb;
+import android.media.MediaCodecInfo;
+import android.media.MediaCodecList;
 import android.net.Uri;
 import android.os.Build;
 import android.Manifest;
@@ -21,6 +23,9 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 import android.util.Log;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.io.IOException;
 import java.io.File;
@@ -170,6 +175,9 @@ public class NativeAudioPlugin {
                 case "setOrientation":
                     onSetOrientation(params, callbackId);
                     break;
+                case "getVideoDecoderCapabilities":
+                    onGetVideoDecoderCapabilities(callbackId);
+                    break;
                 default:
                     rejectCallback(callbackId, "Unknown method: " + method);
                     break;
@@ -275,6 +283,7 @@ public class NativeAudioPlugin {
                 case "requestBatteryOptimization": return onRequestBatteryOptimizationSync();
                 case "getLyricSettings": return onGetLyricSettingsSync();
                 case "setOrientation": return onSetOrientationSync(params);
+                case "getVideoDecoderCapabilities": return onGetVideoDecoderCapabilitiesSync();
                 case "setFullScreen": return onSetFullScreenSync(params);
                 case "openExternalUrl": return onOpenExternalUrlSync(params);
                 case "openAppSettings": return onOpenAppSettingsSync();
@@ -756,6 +765,43 @@ public class NativeAudioPlugin {
             }
         });
         return "{}";
+    }
+
+    // ── Video decoder capabilities detection ──
+
+    private void onGetVideoDecoderCapabilities(String callbackId) {
+        String result = onGetVideoDecoderCapabilitiesSync();
+        resolveCallback(callbackId, result);
+    }
+
+    private String onGetVideoDecoderCapabilitiesSync() {
+        try {
+            JSONObject result = new JSONObject();
+            JSONArray codecs = new JSONArray();
+            boolean hasH264 = false;
+            boolean hasH265 = false;
+            boolean hasVP9 = false;
+
+            MediaCodecList codecList = new MediaCodecList(MediaCodecList.ALL_CODECS);
+            for (MediaCodecInfo info : codecList.getCodecInfos()) {
+                if (info.isEncoder()) continue;
+                for (String type : info.getSupportedTypes()) {
+                    String lower = type.toLowerCase();
+                    if (lower.startsWith("video/avc") || lower.startsWith("video/h264")) {
+                        if (!hasH264) { codecs.put("H.264"); hasH264 = true; }
+                    } else if (lower.startsWith("video/hevc") || lower.startsWith("video/h265")) {
+                        if (!hasH265) { codecs.put("H.265"); hasH265 = true; }
+                    } else if (lower.startsWith("video/x-vnd.on2.vp9") || lower.startsWith("video/vp9")) {
+                        if (!hasVP9) { codecs.put("VP9"); hasVP9 = true; }
+                    }
+                }
+            }
+            result.put("codecs", codecs);
+            return result.toString();
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to detect video decoder capabilities", e);
+            return "{}";
+        }
     }
 
     private String onOpenExternalUrlSync(Map<String, String> params) {

@@ -87,12 +87,13 @@ const CACHE_KEYS = new Set([
 
 function toCachedSong(song: Song): CachedRadioSong {
   const cached: Record<string, unknown> = {};
+  const source = song as unknown as Record<string, unknown>;
   for (const key of CACHE_KEYS) {
-    if ((song as Record<string, unknown>)[key] !== undefined) {
-      cached[key] = (song as Record<string, unknown>)[key];
+    if (source[key] !== undefined) {
+      cached[key] = source[key];
     }
   }
-  return cached as CachedRadioSong;
+  return cached as unknown as CachedRadioSong;
 }
 
 function toSong(cached: CachedRadioSong): Song {

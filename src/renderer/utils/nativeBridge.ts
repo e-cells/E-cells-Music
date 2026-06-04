@@ -158,3 +158,8 @@ export const NativeUpdateBridge = {
   requestInstallPermission: () => nativeCall('requestInstallPermission'),
   addListener,
 };
+
+export const NativeDecoderBridge = {
+  getCapabilities: (): Promise<{ codecs: string[] }> =>
+    nativeCall('getVideoDecoderCapabilities'),
+};

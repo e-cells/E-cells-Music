@@ -1,0 +1,59 @@
+{
+  "name": "易格音乐",
+  "version": "1.2.2",
+  "description": "易格音乐 (E-cells-Music) ── 高颜值的酷狗概念版第三方安卓音乐播放器",
+  "author": {
+    "name": "muye",
+    "email": "307765464@qq.com"
+  },
+  "contributors": [
+    {
+      "name": "hoowhoami",
+      "url": "https://github.com/hoowhoami"
+    }
+  ],
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --config vite.config.web.mts",
+    "build:web": "vite build --config vite.config.web.mts",
+    "build:android": "npm run build:web && node scripts/copy-to-android.mjs",
+    "lint": "eslint . --ext .vue,.js,.ts,.jsx,.tsx --fix",
+    "format": "prettier --write \"src/**/*.{vue,ts,js,json}\" \"tsconfig*.json\""
+  },
+  "dependencies": {
+    "@iconify/icons-tabler": "^1.2.95",
+    "@iconify/types": "^2.0.0",
+    "@iconify/vue": "^5.0.0",
+    "@vueuse/core": "^14.2.1",
+    "axios": "^1.13.6",
+    "crypto-js": "^4.2.0",
+    "howler": "^2.2.4",
+    "pako": "^2.1.0",
+    "pinia": "^2.3.1",
+    "pinia-plugin-persistedstate": "^4.2.0",
+    "qrcode": "^1.5.4",
+    "reka-ui": "^2.9.2",
+    "semver": "^7.7.4",
+    "sortablejs": "^1.15.7",
+    "vue": "^3.5.30",
+    "vue-router": "^4.5.0",
+    "marked": "^18.0.2",
+    "md5": "^2.3.0",
+    "node-forge": "^1.4.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.2.0",
+    "@types/howler": "^2.2.12",
+    "@types/node": "^22.13.9",
+    "@types/semver": "^7.7.1",
+    "@types/sortablejs": "^1.15.9",
+    "@vitejs/plugin-legacy": "^6.0.0",
+    "@vitejs/plugin-vue": "^6.0.5",
+    "tailwindcss": "^4.2.0",
+    "terser": "^5.47.1",
+    "typescript": "^5.7.3",
+    "vite": "^6.2.0",
+    "vue-tsc": "^2.2.8"
+  }
+}

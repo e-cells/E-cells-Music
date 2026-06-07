@@ -17,6 +17,7 @@ import android.graphics.Insets;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.TextView;
+import android.view.TextureView;
 import android.view.Gravity;
 import android.graphics.Color;
 import android.content.res.Configuration;
@@ -142,6 +143,9 @@ public class MainActivity extends AppCompatActivity {
             setContentView(R.layout.activity_main);
             geckoView = findViewById(R.id.geckoView);
 
+            // 原生视频播放器的 TextureView 覆盖层
+            TextureView nativeVideoSurface = findViewById(R.id.nativeVideoSurface);
+
             geckoView.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
                 @Override
                 public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
@@ -171,6 +175,7 @@ public class MainActivity extends AppCompatActivity {
             session.getSettings().setAllowJavascript(true);
 
             audioPlugin = new NativeAudioPlugin(this, session);
+            audioPlugin.setVideoTextureView(nativeVideoSurface);
             ApkUpdateManager.getInstance().setPlugin(audioPlugin);
             ApkUpdateManager.getInstance().cleanupOldApks();
 

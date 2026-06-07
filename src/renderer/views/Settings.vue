@@ -893,6 +893,14 @@ const handleShowChangelog = async () => {
             }"
           />
         </div>
+        <div class="settings-divider"></div>
+        <div class="settings-item">
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">自动领取会员</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">每日自动领取畅听会员并升级（需要登录）</p>
+          </div>
+          <Switch v-model="settingStore.autoReceiveVip" />
+        </div>
       </div>
     </section>
 

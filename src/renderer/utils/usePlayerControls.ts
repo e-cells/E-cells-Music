@@ -12,6 +12,7 @@ import { useToastStore } from '@/stores/toast';
 import type { Song } from '@/models/song';
 import type { AudioEffectValue, AudioQualityValue, PlayMode } from '@/types';
 import { hasSongQuality, isSameSong, resolveEffectiveSongQuality } from '@/utils/song';
+import { launchMv } from '@/utils/launchMv';
 
 const EFFECT_SHORT_LABELS: Record<string, string> = {
   vocal: '人声',
@@ -245,23 +246,12 @@ export function usePlayerControls() {
     const track = currentTrack.value;
     const mvHash = String(track?.mvHash ?? '').trim();
     if (!track || !mvHash) return;
-    if (player.isPlaying) {
-      await player.togglePlay();
-    }
-    router.push({
-      name: 'mv-detail',
-      params: { id: mvHash },
-      query: {
-        hash: mvHash,
-        albumAudioId: track.mixSongId ?? track.id,
-        title: track.title,
-        artist: track.artist,
-        cover: track.coverUrl ?? '',
-        album: track.album ?? '',
-        songId: track.id,
-        mixSongId: track.mixSongId ?? '',
-        from: route.fullPath,
-      },
+    launchMv({
+      hash: mvHash,
+      albumAudioId: String(track.mixSongId ?? track.id),
+      title: track.title,
+      artist: track.artist,
+      cover: track.coverUrl,
     });
   };
 

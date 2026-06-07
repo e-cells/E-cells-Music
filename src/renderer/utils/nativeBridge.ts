@@ -163,3 +163,41 @@ export const NativeDecoderBridge = {
   getCapabilities: (): Promise<{ codecs: string[] }> =>
     nativeCall('getVideoDecoderCapabilities'),
 };
+
+export const NativeVideoBridge = {
+  loadVideo: (options: { url: string; decodeMode: 'hardware' | 'software' }) =>
+    nativeCall('loadNativeVideo', options),
+  play: () => nativeCall('playNativeVideo'),
+  pause: () => nativeCall('pauseNativeVideo'),
+  seek: (options: { timeMs: number }) => nativeCall('seekNativeVideo', options),
+  release: () => nativeCall('releaseNativeVideo'),
+  getCurrentTime: () => nativeCall('getNativeVideoTime'),
+  getDuration: () => nativeCall('getNativeVideoDuration'),
+  showSurface: () => nativeCall('showNativeVideoSurface'),
+  hideSurface: () => nativeCall('hideNativeVideoSurface'),
+  setSurfaceBounds: (options: { left: number; top: number; width: number; height: number }) =>
+    nativeCall('setNativeVideoSurfaceBounds', options),
+};
+
+// 原生 MV 播放 Activity（独立窗口，替代 overlay 方案）
+export const NativeMvPlayerBridge = {
+  openMvPlayer: (options: {
+    url: string;
+    title?: string;
+    author?: string;
+    coverUrl?: string;
+    hash?: string;
+    position?: number;
+    playlist?: string;
+    startIndex?: number;
+    sourceHashes?: string;   // "hash1|label1,hash2|label2,..." 供原生画质选择/自动换源
+    autoFullscreen?: string; // "true" | "false" 横屏时自动全屏
+  }) => nativeCall('openMvPlayer', options),
+  loadMvVideo: (options: {
+    url: string;
+    title?: string;
+    author?: string;
+    coverUrl?: string;
+    index: number;
+  }) => nativeCall('loadMvVideo', options),
+};

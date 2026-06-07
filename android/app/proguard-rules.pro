@@ -23,6 +23,15 @@
 # === AndroidX Media / MediaSession ===
 -keep class androidx.media.** { *; }
 
+# === ExoPlayer (Media3) + FFmpeg 解码器 ===
+-keep class androidx.media3.** { *; }
+-dontwarn androidx.media3.**
+# FFmpeg 扩展解码器（Jellyfin 预编译包）的 JNI 原生方法
+-keep class org.jellyfin.media3.** { *; }
+-keepclassmembers class androidx.media3.decoder.ffmpeg.** {
+    *;
+}
+
 # === Native Bridge (accessed via GeckoView JS) ===
 -keepclassmembers class com.muye.ecells.music.NativeAudioPlugin {
     public *;

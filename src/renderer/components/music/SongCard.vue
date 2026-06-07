@@ -23,6 +23,7 @@ import MvIcon from '@/components/ui/MvIcon.vue';
 import { isSameSong } from '@/utils/song';
 import { addSongToPlayNext, playSongInContext, queueAndPlaySong } from '@/utils/playback';
 import { getSongDerivedState } from '@/utils/song';
+import { launchMv } from '@/utils/launchMv';
 
 interface Props {
   id: string | number;
@@ -253,22 +254,15 @@ const hasMv = computed(() => Boolean((props.mvHash ?? '').trim()));
 const goToMvDetail = () => {
   const mvHash = String(props.mvHash ?? '').trim();
   if (!mvHash) return;
-  const albumAudioId =
-    resolveNumericId(props.mixSongId) ?? resolveNumericId(props.id) ?? String(props.id);
-  router.push({
-    name: 'mv-detail',
-    params: { id: mvHash },
-    query: {
-      hash: mvHash,
-      albumAudioId: albumAudioId,
-      title: props.title,
-      artist: props.artist,
-      cover: props.coverUrl ?? '',
-      album: props.album ?? '',
-      songId: props.id,
-      mixSongId: props.mixSongId ?? props.id,
-      from: router.currentRoute.value.fullPath,
-    },
+  const albumAudioId = String(
+    resolveNumericId(props.mixSongId) ?? resolveNumericId(props.id) ?? props.id,
+  );
+  launchMv({
+    hash: mvHash,
+    albumAudioId,
+    title: props.title,
+    artist: props.artist,
+    cover: props.coverUrl,
   });
 };
 

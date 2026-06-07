@@ -197,9 +197,9 @@ public class AudioCacheManager {
             while ((bytesRead = is.read(buffer)) != -1) {
                 fos.write(buffer, 0, bytesRead);
                 totalBytes += bytesRead;
-                if (callback != null && contentLength > 0 && totalBytes - lastReportBytes >= 32768) {
+                if (callback != null && contentLength > 0 && totalBytes - lastReportBytes >= 131072) {
                     float percent = (float) totalBytes / contentLength;
-                    if (percent - lastReportPercent >= 0.01f) {
+                    if (percent - lastReportPercent >= 0.05f) {
                         lastReportPercent = percent;
                         lastReportBytes = totalBytes;
                         float finalPercent = percent;

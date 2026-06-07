@@ -14,6 +14,8 @@ interface Action {
 interface Props {
   playLabel?: string;
   playDisabled?: boolean;
+  hidePlay?: boolean;
+  hideBatch?: boolean;
   onPlay?: () => void;
   secondaryActions?: Action[];
 }
@@ -21,6 +23,8 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   playLabel: '播放',
   playDisabled: false,
+  hidePlay: false,
+  hideBatch: false,
   secondaryActions: () => [],
 });
 
@@ -32,7 +36,7 @@ const emit = defineEmits<{
 
 <template>
   <div class="action-row-wrap flex flex-wrap items-center justify-start gap-2.5">
-    <Button variant="unstyled" size="none" :disabled="props.playDisabled" @click="emit('play')" class="action-btn primary" :class="{ 'action-btn-disabled': props.playDisabled }">
+    <Button v-if="!props.hidePlay" variant="unstyled" size="none" :disabled="props.playDisabled" @click="emit('play')" class="action-btn primary" :class="{ 'action-btn-disabled': props.playDisabled }">
       <Icon :icon="iconPlay" width="18" height="18" />
       <span>{{ playLabel }}</span>
     </Button>
@@ -51,7 +55,7 @@ const emit = defineEmits<{
       <span>{{ action.label }}</span>
     </Button>
 
-    <Button variant="unstyled" size="none" @click="emit('batch')" class="action-btn secondary">
+    <Button v-if="!props.hideBatch" variant="unstyled" size="none" @click="emit('batch')" class="action-btn secondary">
       <Icon :icon="iconList" width="16" height="16" />
       <span>批量</span>
     </Button>

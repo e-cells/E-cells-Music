@@ -31,6 +31,7 @@ import {
   iconChevronRight,
   iconClock,
   iconCurrentLocation,
+  iconPlay,
   iconSearch,
   iconSparkles,
   iconTrash,
@@ -38,7 +39,11 @@ import {
 } from '@/icons';
 import { replaceQueueAndPlay } from '@/utils/playback';
 import Badge from '@/components/ui/Badge.vue';
-import { isGeckoView } from '@/utils/nativeBridge';
+import { isGeckoView, NativeMvPlayerBridge } from '@/utils/nativeBridge';
+import { getVideoUrl } from '@/api/video';
+import { extractVideoUrl } from '@/utils/mappers/video';
+import { useMvPlaylistStore } from '@/stores/mvPlaylist';
+import { useToastStore } from '@/stores/toast';
 
 interface SearchHotKeyword {
   keyword: string;
@@ -106,11 +111,14 @@ interface SearchMvCardProps {
 const settingStore = useSettingStore();
 const playlistStore = usePlaylistStore();
 const playerStore = usePlayerStore();
+const mvPlaylistStore = useMvPlaylistStore();
+const searchToastStore = useToastStore();
 const route = useRoute();
 
 const searchInput = ref('');
 const currentSearchKeyword = ref('');
 const searchInputRef = ref<HTMLInputElement | null>(null);
+const isMvPlaylistLaunching = ref(false);
 const isLoading = ref(false);
 const isLoadingHot = ref(true);
 const isLoadingSuggestions = ref(false);
@@ -502,6 +510,61 @@ const playSearchSongs = async () => {
   });
 };
 
+// === MV 播放全部 ===
+const playAllMvResults = async () => {
+  if (mvResults.value.length === 0 || isMvPlaylistLaunching.value) return;
+  if (!isGeckoView) {
+    searchToastStore.loadFailed('MV播放需要原生环境支持');
+    return;
+  }
+
+  isMvPlaylistLaunching.value = true;
+
+  try {
+    // 构建播放列表
+    const playlist = mvResults.value.map((mv) => ({
+      hash: mv.hash,
+      title: mv.title,
+      artist: mv.artist ?? '',
+      coverUrl: mv.coverUrl,
+    }));
+
+    // 解析第一个 MV 的 URL
+    const firstMv = playlist[0];
+    const response = await getVideoUrl(firstMv.hash);
+    const isMobileNative = isGeckoView || /Android/i.test(navigator.userAgent);
+    const url = extractVideoUrl(response, firstMv.hash, isMobileNative);
+    if (!url) {
+      searchToastStore.loadFailed('MV');
+      return;
+    }
+
+    // 暂停音频播放
+    if (playerStore.isPlaying) {
+      await playerStore.togglePlay().catch(() => undefined);
+    }
+
+    // 设置播放列表 store 并注册事件监听
+    mvPlaylistStore.setPlaylist(playlist, 0);
+    mvPlaylistStore.setupListeners();
+
+    // 启动原生 Activity，传递播放列表
+    await NativeMvPlayerBridge.openMvPlayer({
+      url,
+      title: firstMv.title,
+      author: firstMv.artist,
+      coverUrl: firstMv.coverUrl,
+      hash: firstMv.hash,
+      playlist: JSON.stringify(playlist),
+      startIndex: 0,
+    });
+  } catch {
+    searchToastStore.loadFailed('MV');
+  } finally {
+    isMvPlaylistLaunching.value = false;
+  }
+};
+
 const handleSongDoubleTapPlay = async (song: Song) => {
   await replaceQueueAndPlay(playlistStore, playerStore, songResults.value, 0, song, {
     queueId: `queue:search:${currentSearchKeyword.value.trim() || 'default'}`,
@@ -812,6 +875,10 @@ const playlistCards = computed(() =>
 const albumCards = computed(() => albumResults.value.map((entry) => getAlbumCardProps(entry)));
 const artistCards = computed(() => artistResults.value.map((entry) => getArtistCardProps(entry)));
 const mvCards = computed(() => mvResults.value);
+
+const searchMvPlaylist = computed(() =>
+  mvResults.value.map((mv) => ({ hash: mv.hash, title: mv.title, artist: mv.artist ?? '', coverUrl: mv.coverUrl })),
+);
 
 onMounted(async () => {
   await loadHotSearches();
@@ -1209,22 +1276,37 @@ onUnmounted(() => {
       </div>
 
       <div v-else class="px-4 md:px-0">
+        <!-- MV 搜索工具栏 -->
+        <div v-if="mvCards.length > 0" class="search-mv-toolbar">
+          <div class="search-mv-toolbar-inner">
+            <div class="text-[15px] font-bold text-text-main leading-none">MV搜索结果</div>
+            <button
+              type="button"
+              class="search-mv-play-all-btn"
+              :disabled="isMvPlaylistLaunching"
+              @click="playAllMvResults"
+            >
+              <Icon :icon="iconPlay" width="14" height="14" />
+              <span>{{ isMvPlaylistLaunching ? '加载中...' : '播放全部' }}</span>
+            </button>
+          </div>
+        </div>
+
         <VirtualGrid
           class="pb-6 mt-2"
           :items="mvCards"
           :loading="paginationState.mv.loading && !paginationState.mv.loaded"
           :active="activeTabIndex === 5"
-          :itemMinWidth="220"
-          :itemAspectRatio="1.78"
-          :itemChromeHeight="50"
-          :gap="16"
+          :itemMinWidth="isGeckoView ? 150 : 200"
+          :itemHeight="isGeckoView ? 130 : 180"
+          :gap="isGeckoView ? 12 : 20"
           :overscan="3"
           :stateMinHeight="320"
           emptyText="暂无相关视频"
           keyField="videoId"
         >
-          <template #default="{ item }">
-            <MvCard v-bind="item" />
+          <template #default="{ item, index }">
+            <MvCard v-bind="item" :playlist="searchMvPlaylist" :playlistIndex="index" />
           </template>
         </VirtualGrid>
         <div v-if="activePagination.loadingMore || activePagination.hasMore" class="search-load-more-status">
@@ -1239,6 +1321,44 @@ onUnmounted(() => {
 
 <style scoped>
 @reference "@/style.css";
+
+/* === MV 搜索工具栏 === */
+.search-mv-toolbar {
+  padding: 10px 0;
+  margin-bottom: 4px;
+}
+
+.search-mv-toolbar-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.search-mv-play-all-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 40%, transparent);
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  color: var(--color-primary);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.search-mv-play-all-btn:hover {
+  background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+}
+
+.search-mv-play-all-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 .pt-safe {
   padding-top: max(8px, env(safe-area-inset-top, 8px));

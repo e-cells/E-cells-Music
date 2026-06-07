@@ -73,10 +73,6 @@ export const usePlayerStore = defineStore(
       void resolver.fetchClimaxMarks(track);
 
       if (previousTime > 0) {
-        state.recentSeekIgnoreEnd = true;
-        window.setTimeout(() => {
-          state.recentSeekIgnoreEnd = false;
-        }, 1500);
         let actualDuration = engine.duration;
         if (actualDuration <= 0) {
           for (let i = 0; i < 10; i++) {
@@ -87,8 +83,18 @@ export const usePlayerStore = defineStore(
         }
         let safeTime = previousTime;
         if (actualDuration > 0 && previousTime >= actualDuration - 0.5) safeTime = 0;
-        engine.seek(safeTime);
-        state.currentTime = safeTime;
+        if (safeTime > 0) {
+          // 接近结尾（< 2 秒）时不忽略 ended 事件，否则播放完毕后不会自动切下一首
+          const nearEnd = actualDuration > 0 && actualDuration - safeTime < 2;
+          if (!nearEnd) {
+            state.recentSeekIgnoreEnd = true;
+            window.setTimeout(() => {
+              state.recentSeekIgnoreEnd = false;
+            }, 1500);
+          }
+          engine.seek(safeTime);
+          state.currentTime = safeTime;
+        }
       }
 
       if (wasPlaying) {
@@ -389,7 +395,9 @@ export const usePlayerStore = defineStore(
             state.currentPlaylist ?? playlistStore.activeQueue?.songs ?? playlistStore.defaultList;
           let track = findTrackById(state.currentTrackId, list, playlistStore);
           // Fallback to persisted snapshot when playlist is empty on restart
+          let usedSingleFallback = false;
           if (!track && state.currentTrackSnapshot) {
+            usedSingleFallback = true;
             track = state.currentTrackSnapshot;
             // 仅当列表确实为空时才设为单曲，否则保留原列表供 next()/prev() 使用
             if (!list || list.length === 0) {
@@ -398,9 +406,33 @@ export const usePlayerStore = defineStore(
           }
           if (track && isPlayableSong(track)) {
             const savedTime = state.lastPlayTime > 0 ? state.lastPlayTime : undefined;
+            const persistedDuration = state.duration > 0 ? state.duration : undefined;
+            const isSingleFallback = usedSingleFallback && (!list || list.length <= 1);
+            const cachedUrl = state.currentAudioUrl || undefined;
+
+            // 启动恢复：传入缓存 URL 直接播放，跳过淡入效果，抑制缓存切换避免中断
             void playbackManager.playTrack(String(track.id), list, {
               seekToTime: savedTime,
+              skipFadeIn: true,
+              estimatedDuration: persistedDuration,
+              cachedAudioUrl: cachedUrl,
+              cachedAudioQuality: cachedUrl ? state.currentResolvedAudioQuality : undefined,
+              isStartupRestore: true,
             });
+
+            // 异步恢复完整播放列表，使 next()/prev() 在歌曲播完后可用
+            if (isSingleFallback) {
+              void (async () => {
+                await new Promise((r) => window.setTimeout(r, 500));
+                playlistStore.hydratePlaybackQueues();
+                const recoveredList =
+                  playlistStore.activeQueue?.songs ?? playlistStore.defaultList;
+                if (recoveredList && recoveredList.length > 1) {
+                  state.currentPlaylist = recoveredList;
+                  playlistStore.updateQueueCurrentTrack(String(track!.id));
+                }
+              })();
+            }
           }
         }
       }
@@ -539,6 +571,10 @@ export const usePlayerStore = defineStore(
         'lastPlayTime',
         'currentTrackSnapshot',
         'currentPlaylist', // 👈 完美的补丁：让本地缓存记住整个播放列表数组
+        'currentAudioUrl', // 启动时直接用缓存 URL 播放，跳过网络请求
+        'currentResolvedAudioQuality', // 验证缓存 URL 的音质一致性
+        'cacheProgressKey', // 恢复缓存进度显示
+        'duration', // 启动时用持久化时长执行 seek，避免轮询等待引擎 duration
       ],
     },
   },

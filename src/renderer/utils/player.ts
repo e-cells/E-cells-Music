@@ -236,7 +236,7 @@ export class PlayerEngine {
     this.events = events;
   }
 
-  setSource(url: string): void {
+  setSource(url: string, options?: { suppressCacheSwitch?: boolean }): void {
     if (!url || this.sourceUrl === url) return;
     this.sourceUrl = url;
     this.durationValue = 0;
@@ -257,6 +257,7 @@ export class PlayerEngine {
         url,
         ...(this.sourceHash ? { hash: this.sourceHash } : {}),
         ...(this.sourceQuality ? { quality: this.sourceQuality } : {}),
+        ...(options?.suppressCacheSwitch ? { suppressCacheSwitch: 'true' } : {}),
       }).then(() => {
         if (this.lastEffect !== 'none') {
           NativeAudio.setAudioEffect({ effect: this.lastEffect }).catch(() => {});

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { useRouter } from 'vue-router';
 import Cover from '@/components/ui/Cover.vue';
 import { iconPlay } from '@/icons';
+import { launchMv, launchMvWithPlaylist, type MvPlaylistItem } from '@/utils/launchMv';
 
 interface Props {
   videoId: string | number;
@@ -13,10 +13,11 @@ interface Props {
   duration?: number;
   publishDate?: string;
   albumAudioId?: string | number;
+  playlist?: MvPlaylistItem[];
+  playlistIndex?: number;
 }
 
 const props = defineProps<Props>();
-const router = useRouter();
 
 const formatDuration = (ms?: number) => {
   if (!ms || ms <= 0) return '';
@@ -29,18 +30,27 @@ const formatDuration = (ms?: number) => {
 const durationText = computed(() => formatDuration(props.duration));
 
 const handleClick = () => {
-  router.push({
-    name: 'mv-detail',
-    params: { id: props.hash || props.videoId },
-    query: {
+  if (props.playlist && props.playlist.length > 1 && props.playlistIndex != null) {
+    launchMvWithPlaylist({
+      playlist: props.playlist,
+      startIndex: props.playlistIndex,
       hash: props.hash,
       videoId: String(props.videoId),
-      albumAudioId: props.albumAudioId ? String(props.albumAudioId) : '',
+      albumAudioId: props.albumAudioId ? String(props.albumAudioId) : undefined,
       title: props.title,
-      artist: props.artist ?? '',
+      artist: props.artist ?? undefined,
       cover: props.coverUrl,
-    },
-  });
+    });
+  } else {
+    launchMv({
+      hash: props.hash,
+      videoId: String(props.videoId),
+      albumAudioId: props.albumAudioId ? String(props.albumAudioId) : undefined,
+      title: props.title,
+      artist: props.artist ?? undefined,
+      cover: props.coverUrl,
+    });
+  }
 };
 </script>
 

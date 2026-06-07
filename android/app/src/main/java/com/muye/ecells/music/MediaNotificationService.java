@@ -446,23 +446,47 @@ public class MediaNotificationService extends MediaBrowserServiceCompat {
     private class MediaSessionCallbacks extends MediaSessionCompat.Callback {
         @Override
         public void onPlay() {
+            // MV 播放器活跃时，控制 MV 播放
+            MvPlayerActivity mvActivity = MvPlayerActivity.currentInstance;
+            if (mvActivity != null) {
+                mvActivity.runOnUiThread(() -> mvActivity.playVideo());
+                return;
+            }
             emitMediaButton("mediaButtonPlay");
         }
 
         @Override
         public void onPause() {
+            // MV 播放器活跃时，控制 MV 暂停
+            MvPlayerActivity mvActivity = MvPlayerActivity.currentInstance;
+            if (mvActivity != null) {
+                mvActivity.runOnUiThread(() -> mvActivity.pauseVideo());
+                return;
+            }
             emitMediaButton("mediaButtonPause");
         }
 
         @Override
         public void onSkipToNext() {
             Log.i(TAG, "MediaSession: onSkipToNext triggered");
+            // MV 播放器活跃时，切换 MV 下一曲
+            MvPlayerActivity mvActivity = MvPlayerActivity.currentInstance;
+            if (mvActivity != null) {
+                mvActivity.runOnUiThread(() -> mvActivity.playNext());
+                return;
+            }
             emitMediaButton("mediaButtonNext");
         }
 
         @Override
         public void onSkipToPrevious() {
             Log.i(TAG, "MediaSession: onSkipToPrevious triggered");
+            // MV 播放器活跃时，切换 MV 上一曲
+            MvPlayerActivity mvActivity = MvPlayerActivity.currentInstance;
+            if (mvActivity != null) {
+                mvActivity.runOnUiThread(() -> mvActivity.playPrev());
+                return;
+            }
             emitMediaButton("mediaButtonPrev");
         }
 

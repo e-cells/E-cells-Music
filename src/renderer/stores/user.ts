@@ -5,11 +5,13 @@ import {
   getUserDetail,
   getUserFollow,
   getUserVipDetail,
+  getVipMonthRecord,
   upgradeDayVip,
 } from '@/api/user';
 import type { User, UserExtendsInfo } from '@/models/user';
 import { mapUser } from '@/utils/mappers';
 import logger from '@/utils/logger';
+import { useToastStore } from '@/stores/toast';
 
 export type UserInfo = User;
 
@@ -198,30 +200,78 @@ export const useUserStore = defineStore('user', {
       if (!this.isLoggedIn || this.isAutoClaimingVip) return;
       this.isAutoClaimingVip = true;
 
+      const toast = useToastStore();
+
       try {
-        // 使用服务器时间获取日期，避免本地时区导致日期不一致
+        // 先从服务器查询今日领取状态，避免重复领取
+        const { isTvipClaimedToday, isSvipClaimedToday } = await this.checkTodayClaimStatus();
+
+        // 如果畅听和概念会员今日都已领取，直接跳过
+        if (isTvipClaimedToday && isSvipClaimedToday) {
+          logger.info('UserStore', 'VIP already claimed today (TVIP + SVIP), skipping auto-claim');
+          return;
+        }
+
         const today = await this.getServerToday();
 
-        // 尝试领取
-        try {
-          await claimDayVip(today);
-        } catch (e) {
-          logger.warn('UserStore', 'VIP claim: claimDayVip failed', e);
+        let claimSuccess = false;
+        let upgradeSuccess = false;
+
+        // 仅在畅听会员未领取时尝试领取
+        if (!isTvipClaimedToday) {
+          try {
+            const res = await claimDayVip(today) as any;
+            claimSuccess = res?.status === 1;
+          } catch (e: any) {
+            const msg = e?.response?.data?.error_message || e?.message || '';
+            toast.warning(msg ? `自动领取失败：${msg}` : '自动领取失败，请稍后重试');
+            logger.warn('UserStore', 'VIP claim: claimDayVip failed', e);
+          }
+        } else {
+          // 畅听已领取，视为成功以继续升级流程
+          claimSuccess = true;
+          logger.info('UserStore', 'TVIP already claimed today, skipping claimDayVip');
         }
 
-        // 尝试升级
-        try {
-          await upgradeDayVip();
-        } catch (e) {
-          logger.warn('UserStore', 'VIP claim: upgradeDayVip failed', e);
+        // 仅在畅听已就绪且概念会员未升级时尝试升级
+        if (claimSuccess && !isSvipClaimedToday) {
+          try {
+            const res = await upgradeDayVip() as any;
+            upgradeSuccess = res?.status === 1 || res?.error_code === 297002;
+          } catch (e) {
+            logger.warn('UserStore', 'VIP claim: upgradeDayVip failed', e);
+          }
         }
 
-        // 刷新用户信息
-        try {
-          await this.fetchUserInfo();
-          this.hasFetchedUserInfo = true;
-        } catch (e) {
-          logger.warn('UserStore', 'VIP claim: fetchUserInfo failed', e);
+        // 有领取或升级操作时刷新用户信息
+        if (!isTvipClaimedToday || (!isSvipClaimedToday && claimSuccess)) {
+          try {
+            await this.fetchUserInfo();
+            this.hasFetchedUserInfo = true;
+          } catch (e) {
+            logger.warn('UserStore', 'VIP claim: fetchUserInfo failed', e);
+          }
+        }
+
+        // 更新领取状态
+        await this.checkTodayClaimStatus();
+
+        // 仅对本次新领取的项目显示提示
+        if (!isTvipClaimedToday && this.isTvipClaimedToday) {
+          const expireDate = this.getVipExpireDate();
+          toast.success(
+            expireDate
+              ? `自动领取成功，会员截至到 ${expireDate} 到期`
+              : '畅听会员自动领取成功',
+          );
+        }
+        if (!isSvipClaimedToday && this.isSvipClaimedToday && upgradeSuccess) {
+          const svipExpire = this.getSvipExpireDate();
+          toast.success(
+            svipExpire
+              ? `概念会员升级成功，截至到 ${svipExpire} 到期`
+              : '概念会员自动升级成功',
+          );
         }
       } catch (error) {
         logger.warn('UserStore', 'Auto receive VIP unexpected error:', error);
@@ -230,9 +280,83 @@ export const useUserStore = defineStore('user', {
       }
     },
 
+    async checkTodayClaimStatus(): Promise<{ isTvipClaimedToday: boolean; isSvipClaimedToday: boolean }> {
+      try {
+        const today = await this.getServerToday();
+        const recordRes = await getVipMonthRecord();
+        const recordList: any[] = recordRes?.data?.list || [];
+
+        const isTvipClaimed = recordList.some((item: any) => item.day === today);
+
+        // 判断 SVIP 是否今日已升级：
+        // 优先从记录项中查找升级标识字段，否则回退到检查 SVIP 的 vip_begin_time 是否为今日
+        let isSvipClaimed = false;
+        const todayRecord = recordList.find((item: any) => item.day === today);
+        if (todayRecord) {
+          if (todayRecord.is_upgrade || todayRecord.svip === 1 || todayRecord.product_type === 'svip') {
+            isSvipClaimed = true;
+          }
+        }
+
+        if (!isSvipClaimed && isTvipClaimed) {
+          const vipInfo = (this.info?.extendsInfo as any)?.vip;
+          const busiVip: any[] = vipInfo?.busi_vip || [];
+          const svipEntry = busiVip.find((v: any) => v.product_type === 'svip' && v.is_vip === 1);
+          if (svipEntry?.vip_begin_time) {
+            try {
+              const beginDate = new Date(svipEntry.vip_begin_time);
+              const pad = (n: number) => n.toString().padStart(2, '0');
+              const beginDay = `${beginDate.getFullYear()}-${pad(beginDate.getMonth() + 1)}-${pad(beginDate.getDate())}`;
+              isSvipClaimed = beginDay === today;
+            } catch {
+              // 解析失败忽略
+            }
+          }
+        }
+
+        this.isTvipClaimedToday = isTvipClaimed;
+        this.isSvipClaimedToday = isSvipClaimed;
+
+        return { isTvipClaimedToday: isTvipClaimed, isSvipClaimedToday: isSvipClaimed };
+      } catch (e) {
+        logger.warn('UserStore', 'Failed to check claim status:', e);
+        return { isTvipClaimedToday: this.isTvipClaimedToday, isSvipClaimedToday: this.isSvipClaimedToday };
+      }
+    },
+
     setClaimStatus(tvip: boolean, svip: boolean) {
       this.isTvipClaimedToday = tvip;
       this.isSvipClaimedToday = svip;
+    },
+
+    getVipExpireDate(): string | null {
+      const vipInfo = (this.info?.extendsInfo as any)?.vip;
+      const busiVip: any[] = vipInfo?.busi_vip || [];
+      const tvip = busiVip.find((v: any) => v.product_type === 'tvip' && v.is_vip === 1);
+      if (!tvip?.vip_end_time) return null;
+      try {
+        const d = new Date(tvip.vip_end_time);
+        if (isNaN(d.getTime())) return null;
+        const pad = (n: number) => n.toString().padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      } catch {
+        return null;
+      }
+    },
+
+    getSvipExpireDate(): string | null {
+      const vipInfo = (this.info?.extendsInfo as any)?.vip;
+      const busiVip: any[] = vipInfo?.busi_vip || [];
+      const svip = busiVip.find((v: any) => v.product_type === 'svip' && v.is_vip === 1);
+      if (!svip?.vip_end_time) return null;
+      try {
+        const d = new Date(svip.vip_end_time);
+        if (isNaN(d.getTime())) return null;
+        const pad = (n: number) => n.toString().padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      } catch {
+        return null;
+      }
     },
     logout() {
       this.info = null;

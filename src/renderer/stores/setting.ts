@@ -76,7 +76,7 @@ export const useSettingStore = defineStore('setting', {
     outputDeviceStatus: 'idle' as OutputDeviceStatus,
     outputDeviceStatusMessage: '',
     outputDeviceDisconnectBehavior: 'pause' as OutputDeviceDisconnectBehavior,
-    autoReceiveVip: false,
+    autoReceiveVip: true,
     showAudioQualityBadge: true,
     volumeNormalization: true,
     volumeNormalizationLufs: -14,

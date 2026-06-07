@@ -47,8 +47,11 @@ import Button from '@/components/ui/Button.vue';
 import { extractFirstObject, extractList } from '@/utils/extractors';
 
 // 引入移动端检测和紧凑布局所需组件
-import { isGeckoView } from '@/utils/nativeBridge';
+import { isGeckoView, NativeMvPlayerBridge } from '@/utils/nativeBridge';
 import Cover from '@/components/ui/Cover.vue';
+import { useMvPlaylistStore } from '@/stores/mvPlaylist';
+import { getVideoUrl } from '@/api/video';
+import { extractVideoUrl } from '@/utils/mappers/video';
 
 interface ArtistAlbumCardProps {
   id: string | number;
@@ -76,6 +79,7 @@ const playerStore = usePlayerStore();
 const settingStore = useSettingStore();
 const userStore = useUserStore();
 const toastStore = useToastStore();
+const mvPlaylistStore = useMvPlaylistStore();
 
 const router = useRouter();
 const { id: currentId, onIdChange } = useRouteId();
@@ -104,6 +108,7 @@ const mvPage = ref(1);
 const mvHasMore = ref(false);
 const mvFetched = ref(false);
 const mvTag = ref<'all' | 'official' | 'live' | 'fan' | 'artist'>('all');
+const isMvPlaylistLaunching = ref(false);
 
 const activeTab = ref('songs');
 const loadedSongCount = ref(0);
@@ -355,6 +360,72 @@ const handlePlayAll = async () => {
     }
   }
 };
+
+// === MV 播放全部（歌手详情页 MV 标签页） ===
+const handlePlayAllMvs = async () => {
+  if (mvs.value.length === 0 || isMvPlaylistLaunching.value) return;
+  if (!isGeckoView) {
+    toastStore.loadFailed('MV播放需要原生环境支持');
+    return;
+  }
+
+  isMvPlaylistLaunching.value = true;
+
+  try {
+    // 构建播放列表
+    const playlist = mvs.value.map((mv) => ({
+      hash: mv.hash,
+      title: mv.title,
+      artist: mv.artist ?? '',
+      coverUrl: mv.coverUrl,
+    }));
+
+    // 解析第一个 MV 的 URL
+    const firstMv = playlist[0];
+    const response = await getVideoUrl(firstMv.hash);
+    const isMobileNative = isGeckoView || /Android/i.test(navigator.userAgent);
+    const url = extractVideoUrl(response, firstMv.hash, isMobileNative);
+    if (!url) {
+      toastStore.loadFailed('MV');
+      return;
+    }
+
+    // 暂停音频播放
+    if (playerStore.isPlaying) {
+      await playerStore.togglePlay().catch(() => undefined);
+    }
+
+    // 设置播放列表 store 并注册事件监听
+    mvPlaylistStore.setPlaylist(playlist, 0);
+    mvPlaylistStore.setupListeners();
+
+    // 启动原生 Activity，传递播放列表
+    await NativeMvPlayerBridge.openMvPlayer({
+      url,
+      title: firstMv.title,
+      author: firstMv.artist,
+      coverUrl: firstMv.coverUrl,
+      hash: firstMv.hash,
+      playlist: JSON.stringify(playlist),
+      startIndex: 0,
+    });
+  } catch {
+    toastStore.loadFailed('MV');
+  } finally {
+    isMvPlaylistLaunching.value = false;
+  }
+};
+
+// 根据当前标签页分派播放行为
+const handlePlayAction = () => {
+  if (activeTab.value === 'mvs') {
+    handlePlayAllMvs();
+  } else if (activeTab.value === 'songs') {
+    handlePlayAll();
+  }
+  // albums 标签页不执行任何操作（播放按钮已隐藏）
+};
+
 const openBatchDrawer = () => {
   if (songs.value.length === 0) return;
   showBatchDrawer.value = true;
@@ -372,6 +443,10 @@ const getAlbumCardProps = (album: ReturnType<typeof mapAlbumMeta>): ArtistAlbumC
 };
 
 const albumCards = computed(() => albums.value.map((entry) => getAlbumCardProps(entry)));
+
+const mvPlaylistData = computed(() =>
+  mvs.value.map((mv) => ({ hash: mv.hash, title: mv.title, artist: mv.artist ?? '', coverUrl: mv.coverUrl })),
+);
 
 const mapMvItem = (item: Record<string, unknown>): ArtistMvCardProps => {
   const hdpic = String(item.hdpic ?? item.cover ?? '').replace('{size}', '400');
@@ -560,7 +635,11 @@ onUnmounted(() => {
             <template #actions>
               <ActionRow
                 :secondaryActions="secondaryActions"
-                @play="handlePlayAll"
+                :hidePlay="activeTab === 'albums'"
+                :hideBatch="activeTab !== 'songs'"
+                :playLabel="activeTab === 'mvs' ? '播放MV' : '播放'"
+                :playDisabled="activeTab === 'mvs' && isMvPlaylistLaunching"
+                @play="handlePlayAction"
                 @batch="openBatchDrawer"
               />
             </template>
@@ -576,14 +655,16 @@ onUnmounted(() => {
                 <Icon :icon="isFollowed ? iconHeartFilled : iconHeart" width="18" height="18" />
               </Button>
               <Button
+                v-if="activeTab !== 'albums'"
                 variant="unstyled"
                 size="none"
-                @click="handlePlayAll"
+                @click="handlePlayAction"
                 class="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-primary transition-colors"
               >
                 <Icon :icon="iconPlay" width="20" height="20" />
               </Button>
               <Button
+                v-if="activeTab === 'songs'"
                 variant="unstyled"
                 size="none"
                 @click="openBatchDrawer"
@@ -733,8 +814,8 @@ onUnmounted(() => {
                   :overscan="3"
                   keyField="videoId"
                 >
-                  <template #default="{ item }">
-                    <MvCard v-bind="item" />
+                  <template #default="{ item, index }">
+                    <MvCard v-bind="item" :playlist="mvPlaylistData" :playlistIndex="index" />
                   </template>
                 </VirtualGrid>
               </TabsContent>
@@ -783,7 +864,11 @@ onUnmounted(() => {
             <div class="px-4 pb-2 pt-2">
               <ActionRow
                 :secondaryActions="secondaryActions"
-                @play="handlePlayAll"
+                :hidePlay="activeTab === 'albums'"
+                :hideBatch="activeTab !== 'songs'"
+                :playLabel="activeTab === 'mvs' ? '播放MV' : '播放'"
+                :playDisabled="activeTab === 'mvs' && isMvPlaylistLaunching"
+                @play="handlePlayAction"
                 @batch="openBatchDrawer"
               />
             </div>
@@ -888,8 +973,8 @@ onUnmounted(() => {
                 :overscan="3"
                 keyField="videoId"
               >
-                <template #default="{ item }">
-                  <MvCard v-bind="item" />
+                <template #default="{ item, index }">
+                  <MvCard v-bind="item" :playlist="mvPlaylistData" :playlistIndex="index" />
                 </template>
               </VirtualGrid>
             </TabsContent>

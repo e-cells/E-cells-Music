@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/controls_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:visibility="visible">
+
+    <!-- 居中大播放/暂停按钮 -->
+    <ImageButton
+        android:id="@+id/center_play_pause"
+        android:layout_width="56dp"
+        android:layout_height="56dp"
+        android:layout_gravity="center"
+        android:background="@drawable/mv_btn_circle_background"
+        android:src="@drawable/ic_play"
+        android:contentDescription="播放/暂停"
+        android:visibility="gone" />
+
+    <!-- 底部控件条 -->
+    <LinearLayout
+        android:id="@+id/bottom_controls"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_gravity="bottom"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:background="@drawable/mv_gradient_bottom">
+
+        <!-- 上一个 MV（有播放列表时可见） -->
+        <ImageButton
+            android:id="@+id/btn_prev"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_skip_prev"
+            android:contentDescription="上一个"
+            android:visibility="gone" />
+
+        <!-- 播放/暂停 -->
+        <ImageButton
+            android:id="@+id/btn_play_pause"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_play"
+            android:contentDescription="播放/暂停" />
+
+        <!-- 下一个 MV（有播放列表时可见） -->
+        <ImageButton
+            android:id="@+id/btn_next"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_skip_next"
+            android:contentDescription="下一个"
+            android:visibility="gone" />
+
+        <!-- 播放列表指示 "3 / 20"（有播放列表时可见） -->
+        <TextView
+            android:id="@+id/playlist_indicator"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:textColor="#80FFFFFF"
+            android:textSize="11sp"
+            android:text=""
+            android:visibility="gone" />
+
+        <!-- 当前时间 -->
+        <TextView
+            android:id="@+id/time_current"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:textColor="#B3FFFFFF"
+            android:textSize="12sp"
+            android:text="0:00" />
+
+        <!-- 进度条 -->
+        <SeekBar
+            android:id="@+id/seek_bar"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="6dp"
+            android:layout_marginEnd="6dp"
+            android:max="1000"
+            android:progressDrawable="@drawable/mv_seek_bar_progress"
+            android:thumb="@drawable/mv_seek_bar_thumb"
+            android:splitTrack="false" />
+
+        <!-- 总时长 -->
+        <TextView
+            android:id="@+id/time_duration"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="8dp"
+            android:textColor="#B3FFFFFF"
+            android:textSize="12sp"
+            android:text="0:00" />
+
+        <!-- 播放列表切换（有播放列表时可见） -->
+        <ImageButton
+            android:id="@+id/btn_playlist"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_playlist"
+            android:contentDescription="播放列表"
+            android:visibility="gone" />
+
+        <!-- 画质选择（有多个片源时可见） -->
+        <TextView
+            android:id="@+id/btn_quality"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:gravity="center"
+            android:paddingStart="6dp"
+            android:paddingEnd="6dp"
+            android:textColor="#B3FFFFFF"
+            android:textSize="12sp"
+            android:text="画质"
+            android:visibility="gone"
+            android:background="?attr/selectableItemBackgroundBorderless" />
+
+        <!-- 全屏切换 -->
+        <ImageButton
+            android:id="@+id/btn_fullscreen"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_fullscreen"
+            android:contentDescription="全屏" />
+
+    </LinearLayout>
+
+</FrameLayout>

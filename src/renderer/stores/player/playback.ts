@@ -3,6 +3,8 @@ import type { Song } from '@/models/song';
 import { isPlayableSong } from '@/utils/song';
 import type { PlayerState } from './state';
 import type { PlayerEngine } from '@/utils/player';
+import type { ResolvedAudioSource } from './types';
+import type { AudioEffectValue, AudioQualityValue } from '../../types';
 import type { usePlaylistStore } from '../playlist';
 import type { useSettingStore } from '../setting';
 import { PERSONAL_FM_QUEUE_ID } from '../playlist';
@@ -190,6 +192,11 @@ export const createPlaybackManager = (
       autoPlay?: boolean;
       sourceQueueId?: string | null;
       seekToTime?: number;
+      skipFadeIn?: boolean;
+      estimatedDuration?: number;
+      cachedAudioUrl?: string;
+      cachedAudioQuality?: string | null;
+      isStartupRestore?: boolean;
     },
   ) => {
     const requestSeq = ++state.playbackRequestSeq;
@@ -284,7 +291,19 @@ export const createPlaybackManager = (
       buildStoppedPlaybackState({ playbackRate: state.playbackRate }),
     );
 
-    const resolved = await resolver.resolveAudioUrl(track);
+    // 快速路径：如果传入了缓存 URL，直接使用，跳过网络请求
+    const cachedUrl = options?.cachedAudioUrl;
+    let resolved: ResolvedAudioSource;
+    if (cachedUrl) {
+      resolved = {
+        url: cachedUrl,
+        quality: (options?.cachedAudioQuality as AudioQualityValue) ?? null,
+        effect: 'none' as AudioEffectValue,
+        loudness: null,
+      };
+    } else {
+      resolved = await resolver.resolveAudioUrl(track);
+    }
     if (requestSeq !== state.playbackRequestSeq) return;
     if (!resolved.url) {
       state.lastError = 'audio-url-unavailable';
@@ -316,13 +335,41 @@ export const createPlaybackManager = (
     if (hash) {
       state.cacheProgressKey = hash + '_' + (quality || 'default');
     }
-    engine.setSource(resolved.url);
+    engine.setSource(resolved.url, { suppressCacheSwitch: options?.isStartupRestore });
     engine.applyTrackLoudness(resolved.loudness);
     engine.setLoopFile(state.playMode === 'single');
 
     try {
+      // Seek to saved position BEFORE starting playback to avoid audible jump
+      // (native audio: seek before play ensures MediaPlayer starts from seeked position,
+      //  or pendingSeekMs is set so OnPreparedListener seeks before start())
+      const seekToTime = options?.seekToTime;
+      if (seekToTime && seekToTime > 0) {
+        let actualDuration = engine.duration || state.duration;
+        if (actualDuration <= 0 && options?.estimatedDuration && options.estimatedDuration > 0) {
+          actualDuration = options.estimatedDuration;
+        }
+        if (actualDuration <= 0) actualDuration = track.duration || 0;
+        let safeTime = seekToTime;
+        if (actualDuration > 0 && seekToTime >= actualDuration - 0.5) safeTime = 0;
+        if (safeTime > 0) {
+          // 接近结尾（< 2 秒）时不忽略 ended 事件，否则播放完毕后不会自动切下一首
+          const nearEnd = actualDuration > 0 && actualDuration - safeTime < 2;
+          if (!nearEnd) {
+            state.recentSeekIgnoreEnd = true;
+            window.setTimeout(() => {
+              state.recentSeekIgnoreEnd = false;
+            }, 1500);
+          }
+          state.seekTargetTime = safeTime;
+          state.seekTimestamp = Date.now();
+          engine.seek(safeTime);
+          state.currentTime = safeTime;
+        }
+      }
+
       if (autoPlay) {
-        if (settingStore.volumeFade) {
+        if (!options?.skipFadeIn && settingStore.volumeFade) {
           const fadeMs = clampNumber(settingStore.volumeFadeTime ?? 1000, 500, 3000);
           await engine.play({ fadeIn: true, fadeDurationMs: fadeMs });
         } else {
@@ -343,29 +390,6 @@ export const createPlaybackManager = (
         state.isPlaying = true;
       }
 
-      // Seek to saved position after playback started (wait for audio to be prepared)
-      const seekToTime = options?.seekToTime;
-      if (seekToTime && seekToTime > 0) {
-        let actualDuration = engine.duration || state.duration;
-        for (let i = 0; i < 20 && actualDuration <= 0; i++) {
-          await new Promise((r) => window.setTimeout(r, 100));
-          actualDuration = engine.duration || state.duration;
-        }
-        if (actualDuration <= 0) actualDuration = track.duration || 0;
-        let safeTime = seekToTime;
-        if (actualDuration > 0 && seekToTime >= actualDuration - 0.5) safeTime = 0;
-        if (safeTime > 0) {
-          state.recentSeekIgnoreEnd = true;
-          window.setTimeout(() => {
-            state.recentSeekIgnoreEnd = false;
-          }, 1500);
-          state.seekTargetTime = safeTime;
-          state.seekTimestamp = Date.now();
-          engine.seek(safeTime);
-          state.currentTime = safeTime;
-        }
-      }
-
       recoveryAttempts = 0;
       isRecovering = false;
       if (recoveryTimer !== null) {
@@ -374,9 +398,59 @@ export const createPlaybackManager = (
       }
 
       // Pre-cache next track for smoother transitions
-      preloadNextTrack(resolvedId, sourceList, resolved.quality);
+      preloadNextTrack(resolvedId, sourceList, resolved.quality ?? undefined);
 
       void resolver.fetchClimaxMarks(track);
+
+      // 后台刷新：如果使用了缓存 URL，异步获取最新 URL
+      if (cachedUrl && requestSeq === state.playbackRequestSeq) {
+        void (async () => {
+          try {
+            const freshResolved = await resolver.resolveAudioUrl(track, { forceReload: true });
+            if (requestSeq !== state.playbackRequestSeq) return;
+            if (freshResolved.url && freshResolved.url !== cachedUrl) {
+              state.currentAudioUrl = freshResolved.url;
+              state.currentResolvedAudioQuality = freshResolved.quality;
+              state.currentResolvedAudioEffect = freshResolved.effect;
+              track.audioUrl = freshResolved.url;
+              engine.setSourceMeta(track.hash ?? '', freshResolved.quality);
+              if (options?.isStartupRestore) {
+                // 启动恢复：仅更新元数据，不中断正在播放的音频
+                // 新 URL 会在下次播放该歌曲时使用
+                if (freshResolved.loudness) engine.applyTrackLoudness(freshResolved.loudness);
+              } else {
+                // 非启动场景：热替换引擎源并 seek 回当前进度
+                engine.setSource(freshResolved.url);
+                engine.applyTrackLoudness(freshResolved.loudness);
+                const savedTime = state.currentTime;
+                if (savedTime > 0) {
+                  let d = engine.duration;
+                  for (let i = 0; i < 10 && d <= 0; i++) {
+                    await new Promise((r) => window.setTimeout(r, 50));
+                    d = engine.duration;
+                  }
+                  if (d <= 0) d = state.duration || 0;
+                  if (d > 0 && savedTime < d - 0.5) {
+                    engine.seek(savedTime);
+                  }
+                }
+                if (state.isPlaying) {
+                  await engine.play();
+                }
+              }
+            } else if (freshResolved.url === cachedUrl) {
+              // URL 未变化，仅更新音质和响度元数据
+              state.currentResolvedAudioQuality = freshResolved.quality;
+              state.currentResolvedAudioEffect = freshResolved.effect;
+              if (freshResolved.loudness) {
+                engine.applyTrackLoudness(freshResolved.loudness);
+              }
+            }
+          } catch {
+            // 后台刷新失败不影响播放，静默忽略
+          }
+        })();
+      }
     } catch (error) {
       logger.error('PlayerPlayback', 'Play track failed:', error);
       if (requestSeq !== state.playbackRequestSeq) return;
@@ -466,10 +540,21 @@ export const createPlaybackManager = (
 
   const next = async () => {
     playlistStore.syncQueuedNextTrackIds();
-    const list =
+    let list =
       (playlistStore.activeQueue?.songs?.length ?? 0) > 0
         ? (playlistStore.activeQueue?.songs ?? [])
         : (state.currentPlaylist ?? []);
+
+    // 防御：如果列表为单曲降级，尝试从 playlistStore 恢复完整列表
+    if (list.length <= 1) {
+      playlistStore.hydratePlaybackQueues();
+      const recovered = playlistStore.activeQueue?.songs ?? playlistStore.defaultList;
+      if (recovered.length > list.length) {
+        list = recovered;
+        state.currentPlaylist = recovered;
+      }
+    }
+
     if (list.length === 0) return;
 
     clearAutoNextTimer();

@@ -16,35 +16,9 @@
         }
       ],
       "attributes": [],
-      "versionCode": 1221,
-      "versionName": "1.2.2",
-      "outputFile": "e-cells-music-armeabi-v7a-1.2.2.apk"
-    },
-    {
-      "type": "ONE_OF_MANY",
-      "filters": [
-        {
-          "filterType": "ABI",
-          "value": "x86"
-        }
-      ],
-      "attributes": [],
-      "versionCode": 1222,
-      "versionName": "1.2.2",
-      "outputFile": "e-cells-music-x86-1.2.2.apk"
-    },
-    {
-      "type": "ONE_OF_MANY",
-      "filters": [
-        {
-          "filterType": "ABI",
-          "value": "arm64-v8a"
-        }
-      ],
-      "attributes": [],
-      "versionCode": 1223,
-      "versionName": "1.2.2",
-      "outputFile": "e-cells-music-arm64-v8a-1.2.2.apk"
+      "versionCode": 1231,
+      "versionName": "1.2.3",
+      "outputFile": "e-cells-music-armeabi-v7a-1.2.3.apk"
     },
     {
       "type": "ONE_OF_MANY",
@@ -55,9 +29,35 @@
         }
       ],
       "attributes": [],
-      "versionCode": 1224,
-      "versionName": "1.2.2",
-      "outputFile": "e-cells-music-x86_64-1.2.2.apk"
+      "versionCode": 1234,
+      "versionName": "1.2.3",
+      "outputFile": "e-cells-music-x86_64-1.2.3.apk"
+    },
+    {
+      "type": "ONE_OF_MANY",
+      "filters": [
+        {
+          "filterType": "ABI",
+          "value": "x86"
+        }
+      ],
+      "attributes": [],
+      "versionCode": 1232,
+      "versionName": "1.2.3",
+      "outputFile": "e-cells-music-x86-1.2.3.apk"
+    },
+    {
+      "type": "ONE_OF_MANY",
+      "filters": [
+        {
+          "filterType": "ABI",
+          "value": "arm64-v8a"
+        }
+      ],
+      "attributes": [],
+      "versionCode": 1233,
+      "versionName": "1.2.3",
+      "outputFile": "e-cells-music-arm64-v8a-1.2.3.apk"
     }
   ],
   "elementType": "File",
@@ -66,20 +66,20 @@
       "minApi": 28,
       "maxApi": 30,
       "baselineProfiles": [
-        "baselineProfiles/1/e-cells-music-armeabi-v7a-1.2.2.dm",
-        "baselineProfiles/1/e-cells-music-x86-1.2.2.dm",
-        "baselineProfiles/1/e-cells-music-arm64-v8a-1.2.2.dm",
-        "baselineProfiles/1/e-cells-music-x86_64-1.2.2.dm"
+        "baselineProfiles/1/e-cells-music-armeabi-v7a-1.2.3.dm",
+        "baselineProfiles/1/e-cells-music-x86_64-1.2.3.dm",
+        "baselineProfiles/1/e-cells-music-x86-1.2.3.dm",
+        "baselineProfiles/1/e-cells-music-arm64-v8a-1.2.3.dm"
       ]
     },
     {
       "minApi": 31,
       "maxApi": 2147483647,
       "baselineProfiles": [
-        "baselineProfiles/0/e-cells-music-armeabi-v7a-1.2.2.dm",
-        "baselineProfiles/0/e-cells-music-x86-1.2.2.dm",
-        "baselineProfiles/0/e-cells-music-arm64-v8a-1.2.2.dm",
-        "baselineProfiles/0/e-cells-music-x86_64-1.2.2.dm"
+        "baselineProfiles/0/e-cells-music-armeabi-v7a-1.2.3.dm",
+        "baselineProfiles/0/e-cells-music-x86_64-1.2.3.dm",
+        "baselineProfiles/0/e-cells-music-x86-1.2.3.dm",
+        "baselineProfiles/0/e-cells-music-arm64-v8a-1.2.3.dm"
       ]
     }
   ],

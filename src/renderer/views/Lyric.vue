@@ -169,6 +169,37 @@ const handleLyricWheel = () => {
   scheduleResumeFollowScroll();
 };
 
+// ── 自定义滚动动画（替代浏览器原生 smooth scroll，可控时长） ──
+let scrollAnimationId: number | null = null;
+const cancelScrollAnimation = () => {
+  if (scrollAnimationId !== null) {
+    cancelAnimationFrame(scrollAnimationId);
+    scrollAnimationId = null;
+  }
+};
+const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+const animateScrollTo = (container: HTMLElement, targetTop: number, durationMs: number) => {
+  cancelScrollAnimation();
+  const startTop = container.scrollTop;
+  const distance = targetTop - startTop;
+  if (Math.abs(distance) < 2) {
+    container.scrollTop = targetTop;
+    return;
+  }
+  const startTime = performance.now();
+  const step = (now: number) => {
+    const elapsed = now - startTime;
+    const progress = Math.min(elapsed / durationMs, 1);
+    container.scrollTop = startTop + distance * easeOutCubic(progress);
+    if (progress < 1) {
+      scrollAnimationId = requestAnimationFrame(step);
+    } else {
+      scrollAnimationId = null;
+    }
+  };
+  scrollAnimationId = requestAnimationFrame(step);
+};
+
 const scrollToCurrentLine = (smooth: boolean) => {
   const container = lyricListRef.value;
   let index = lyricStore.currentIndex;
@@ -197,7 +228,12 @@ const scrollToCurrentLine = (smooth: boolean) => {
       container.clientHeight +
       twoLineHeight +
       bottomMargin;
-    container.scrollTo({ top: Math.max(0, offset), behavior: smooth ? 'smooth' : 'auto' });
+    if (smooth) {
+      animateScrollTo(container, Math.max(0, offset), 80);
+    } else {
+      cancelScrollAnimation();
+      container.scrollTop = Math.max(0, offset);
+    }
     return;
   }
 
@@ -208,7 +244,12 @@ const scrollToCurrentLine = (smooth: boolean) => {
     container.scrollTop -
     container.clientHeight * anchorRatio +
     targetRect.height / 2;
-  container.scrollTo({ top: Math.max(0, offset), behavior: smooth ? 'smooth' : 'auto' });
+  if (smooth) {
+    animateScrollTo(container, Math.max(0, offset), 80);
+  } else {
+    cancelScrollAnimation();
+    container.scrollTop = Math.max(0, offset);
+  }
 };
 
 const handleProgressInput = (value: number[] | undefined) => {
@@ -571,9 +612,8 @@ const ensureArtistBackdropForCurrentTrack = async () => {
 
 watch(
   () => lyricStore.currentIndex,
-  async (index, previous) => {
+  (index, previous) => {
     if (index === previous) return;
-    await nextTick();
     scrollToCurrentLine(previous !== -1);
   },
 );
@@ -583,8 +623,10 @@ watch(
   (value) => {
     if (isProgressDragging.value) return;
     progressValue.value = value;
-    // 歌词页打开时自驱动歌词行索引和逐字高亮
-    lyricStore.updateCurrentIndex(value, true);
+    // 暂停状态下由原生时间驱动行索引；播放时由 RAF 循环接管（60fps）
+    if (!playerStore.isPlaying) {
+      lyricStore.updateCurrentIndex(value, true);
+    }
   },
   { immediate: true },
 );
@@ -742,14 +784,29 @@ const handleKeydown = (event: KeyboardEvent) => {
 };
 
 // ── 逐字歌词实时进度（毫秒） ──
-const LYRIC_LOOKAHEAD = 150;
+const LYRIC_LOOKAHEAD = 300;
 const playSeekMs = ref(0);
 let seekBaseMs = 0;
 let seekAnchorTick = 0;
 
+// 记录上一次滚动到的行索引，用于在 RAF 中检测行变化并直接滚动
+let rafLastScrolledIndex = -1;
+
 const { pause: pauseSeekRaf, resume: resumeSeekRaf } = useRafFn(() => {
   if (playerStore.isPlaying) {
     playSeekMs.value = seekBaseMs + (performance.now() - seekAnchorTick);
+    // 用插值时间驱动歌词行索引（60fps），替代原生回调（~200ms 一次）
+    // 加上提前量让歌词先于歌声滚动到位，消除感知延迟
+    if (lyricStore.lines.length > 0 && !isProgressDragging.value) {
+      const interpolatedTimeSec = (playSeekMs.value + LYRIC_LOOKAHEAD) / 1000;
+      lyricStore.updateCurrentIndex(interpolatedTimeSec, true);
+      // 直接在 RAF 帧内滚动，绕过 Vue 响应式 watcher 的延迟
+      // 播放时不使用动画，直接瞬移到位（lookahead 保证提前量）
+      if (lyricStore.currentIndex !== rafLastScrolledIndex && !isUserScrollingLyrics.value) {
+        rafLastScrolledIndex = lyricStore.currentIndex;
+        scrollToCurrentLine(false);
+      }
+    }
   }
 });
 
@@ -808,6 +865,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   pauseSeekRaf();
+  cancelScrollAnimation();
   artistBackdropRequestId += 1;
   clearUserScrollResumeTimer();
   stopPortraitCarousel();
@@ -2268,10 +2326,10 @@ body:has(.lyric-view) .drawer-panel {
   color: inherit;
   cursor: pointer;
   transition:
-    opacity 0.26s ease,
-    transform 0.26s ease,
-    background-color 0.26s ease,
-    box-shadow 0.26s ease;
+    opacity 0.1s ease,
+    transform 0.1s ease,
+    background-color 0.1s ease,
+    box-shadow 0.1s ease;
 }
 
 .lyric-line > span:first-child {

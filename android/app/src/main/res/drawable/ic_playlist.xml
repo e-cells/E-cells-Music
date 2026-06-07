@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- 播放列表图标：三条横线 + 音符 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M4,6h12v2H4zM4,11h12v2H4zM4,16h8v2H4zM18,14v-3h2v7.5a2.5,2.5 0 1,1 -2,-2.5z" />
+</vector>

@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/root_layout"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#000000">
+
+    <!-- 视频容器：竖屏占 40%，横屏占满 -->
+    <FrameLayout
+        android:id="@+id/video_container"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="4">
+
+        <!-- ExoPlayer PlayerView -->
+        <androidx.media3.ui.PlayerView
+            android:id="@+id/player_view"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#000000"
+            app:use_controller="false"
+            app:resize_mode="fit" />
+
+        <!-- 视频控件覆盖层 -->
+        <include layout="@layout/mv_video_controls_overlay" />
+
+        <!-- 加载指示器 -->
+        <ProgressBar
+            android:id="@+id/loading_indicator"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_gravity="center"
+            android:visibility="gone" />
+
+        <!-- 错误信息 -->
+        <TextView
+            android:id="@+id/error_message"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:gravity="center"
+            android:padding="16dp"
+            android:visibility="gone" />
+
+        <!-- 横屏播放列表抽屉（覆盖在视频右侧） -->
+        <FrameLayout
+            android:id="@+id/landscape_playlist_drawer"
+            android:layout_width="280dp"
+            android:layout_height="match_parent"
+            android:layout_gravity="end"
+            android:background="#CC000000"
+            android:visibility="gone">
+
+            <include layout="@layout/mv_playlist_panel" />
+
+        </FrameLayout>
+
+    </FrameLayout>
+
+    <!-- 竖屏信息区 / 竖屏播放列表面板（互斥显示） -->
+    <FrameLayout
+        android:id="@+id/bottom_container"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="6">
+
+        <!-- 信息区 -->
+        <ScrollView
+            android:id="@+id/info_scroll"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#121212"
+            android:fillViewport="true">
+
+            <include layout="@layout/mv_info_section" />
+
+        </ScrollView>
+
+        <!-- 竖屏播放列表面板（替代信息区） -->
+        <include
+            android:id="@+id/portrait_playlist_panel"
+            layout="@layout/mv_playlist_panel"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+
+    </FrameLayout>
+
+</LinearLayout>

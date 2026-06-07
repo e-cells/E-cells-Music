@@ -9,8 +9,9 @@ import Button from '@/components/ui/Button.vue';
 import Dialog from '@/components/ui/Dialog.vue';
 import Popover from '@/components/ui/Popover.vue';
 
-import { claimDayVip, upgradeDayVip, getVipMonthRecord } from '@/api/user';
+import { claimDayVip, upgradeDayVip } from '@/api/user';
 import Avatar from '@/components/ui/Avatar.vue';
+import { useToastStore } from '@/stores/toast';
 
 import logger from '@/utils/logger';
 import {
@@ -49,6 +50,7 @@ interface DetailState {
 const router = useRouter();
 const userStore = useUserStore();
 const settingStore = useSettingStore();
+const toastStore = useToastStore();
 const userInfo = computed(() => userStore.info);
 
 const isLoading = ref(false);
@@ -149,13 +151,7 @@ const loadData = async () => {
   try {
     await userStore.fetchUserInfo();
 
-    const recordRes = await getVipMonthRecord();
-    const today = new Date().toISOString().split('T')[0];
-    const recordList = recordRes?.data?.list || [];
-    const isTvipClaimed = recordList.some((item: any) => item.day === today);
-    const isSvipActive = !!svip.value;
-
-    userStore.setClaimStatus(isTvipClaimed, isSvipActive);
+    await userStore.checkTodayClaimStatus();
   } catch (e) {
     logger.error('Profile', 'Load Data Error:', e);
   } finally {
@@ -173,7 +169,10 @@ const loadData = async () => {
 };
 
 const handleClaimTvip = async () => {
-  if (userStore.isTvipClaimedToday) return;
+  if (userStore.isTvipClaimedToday) {
+    toastStore.info('今日已领取过，请明日再试');
+    return;
+  }
   isLoading.value = true;
   try {
     const today = await userStore.getServerToday();
@@ -181,25 +180,53 @@ const handleClaimTvip = async () => {
     if (res.status === 1) {
       userStore.setClaimStatus(true, userStore.isSvipClaimedToday);
       await loadData();
+      // 领取成功后获取到期时间
+      const expireText = tvip.value ? formatVipDate(tvip.value.vip_end_time) : '';
+      if (expireText && expireText !== '--') {
+        toastStore.success(`领取成功，会员截至到 ${expireText.split(' ')[0]} 到期`);
+      } else {
+        toastStore.success('畅听会员领取成功');
+      }
+    } else {
+      toastStore.warning('领取失败，请稍后重试');
     }
-  } catch (e) {
+  } catch (e: any) {
     logger.error('Profile', 'Claim TVIP error:', e);
+    const msg = e?.response?.data?.error_message || e?.message || '';
+    toastStore.warning(msg ? `领取失败：${msg}` : '领取失败，请检查网络后重试');
   } finally {
     isLoading.value = false;
   }
 };
 
 const handleUpgradeSvip = async () => {
-  if (userStore.isSvipClaimedToday || !userStore.isTvipClaimedToday) return;
+  if (!userStore.isTvipClaimedToday) {
+    toastStore.info('请先领取畅听会员');
+    return;
+  }
+  if (userStore.isSvipClaimedToday) {
+    toastStore.info('今日已升级过，请明日再试');
+    return;
+  }
   isLoading.value = true;
   try {
     const res = (await upgradeDayVip()) as VipActionResponse;
     if (res.status === 1 || res.error_code === 297002) {
       userStore.setClaimStatus(userStore.isTvipClaimedToday, true);
-      await loadData(); // 刷新
+      await loadData();
+      const expireText = svip.value ? formatVipDate(svip.value.vip_end_time) : '';
+      if (expireText && expireText !== '--') {
+        toastStore.success(`升级成功，会员截至到 ${expireText.split(' ')[0]} 到期`);
+      } else {
+        toastStore.success('概念会员升级成功');
+      }
+    } else {
+      toastStore.warning('升级失败，请稍后重试');
     }
-  } catch (e) {
+  } catch (e: any) {
     logger.error('Profile', 'Upgrade SVIP error:', e);
+    const msg = e?.response?.data?.error_message || e?.message || '';
+    toastStore.warning(msg ? `升级失败：${msg}` : '升级失败，请检查网络后重试');
   } finally {
     isLoading.value = false;
   }

@@ -1,6 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<org.mozilla.geckoview.GeckoView
-    xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/geckoView"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent" />
+    android:layout_height="match_parent">
+
+    <org.mozilla.geckoview.GeckoView
+        android:id="@+id/geckoView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- 自定义 TextureView：不拦截触摸事件，让点击穿透到 GeckoView -->
+    <com.muye.ecells.music.PassThroughTextureView
+        android:id="@+id/nativeVideoSurface"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone" />
+
+</FrameLayout>

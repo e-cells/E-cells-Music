@@ -40,6 +40,9 @@ public class NativeAudioPlugin {
 
     private static final String TAG = "NativeAudio";
 
+    // 静态实例引用（供 MvPlayerActivity 通过 emitStaticEvent 通信）
+    private static NativeAudioPlugin instance;
+
     private final WeakReference<MainActivity> activityRef;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private MediaPlayer mediaPlayer;
@@ -66,8 +69,15 @@ public class NativeAudioPlugin {
     private short eqNumberOfBands = 0;
     private int[] eqCenterFreqs;
 
+    // 原生视频播放器（ExoPlayer + FFmpeg）
+    private NativeVideoPlayer nativeVideoPlayer;
+
     public NativeAudioPlugin(MainActivity activity, Object session) {
         this.activityRef = new WeakReference<>(activity);
+        instance = this;
+
+        // 初始化原生视频播放器
+        nativeVideoPlayer = new NativeVideoPlayer(activity, this);
 
         // Listen for lock state changes from LyricOverlayService and forward to JS
         LyricOverlayService.setOnSettingsChangedListener((locked) -> {
@@ -80,6 +90,13 @@ public class NativeAudioPlugin {
         MainActivity a = activityRef.get();
         if (a != null && !a.isDestroyed()) return a;
         return null;
+    }
+
+    /** 设置原生视频播放器的 TextureView（由 MainActivity 调用） */
+    public void setVideoTextureView(android.view.TextureView textureView) {
+        if (nativeVideoPlayer != null) {
+            nativeVideoPlayer.setTextureView(textureView);
+        }
     }
 
     public void handleUri(String uriString) {
@@ -308,6 +325,21 @@ public class NativeAudioPlugin {
                 case "requestInstallPermission": return onRequestInstallPermissionSync();
                 // Pinia store 持久化到 SharedPreferences（同步写磁盘，绕过 GeckoView localStorage 不刷盘问题）
                 case "persistStore": return onPersistStoreSync(params);
+                // 原生视频播放器（ExoPlayer + FFmpeg 软件解码降级）
+                case "loadNativeVideo": return onLoadNativeVideoSync(params);
+                case "playNativeVideo": return onPlayNativeVideoSync();
+                case "pauseNativeVideo": return onPauseNativeVideoSync();
+                case "seekNativeVideo": return onSeekNativeVideoSync(params);
+                case "releaseNativeVideo": return onReleaseNativeVideoSync();
+                case "getNativeVideoTime": return onGetNativeVideoTimeSync();
+                case "getNativeVideoDuration": return onGetNativeVideoDurationSync();
+                case "showNativeVideoSurface": return onShowNativeVideoSurfaceSync();
+                case "hideNativeVideoSurface": return onHideNativeVideoSurfaceSync();
+                case "setNativeVideoSurfaceBounds": return onSetNativeVideoSurfaceBoundsSync(params);
+                // 原生 MV 播放 Activity（独立窗口，替代 overlay 方案）
+                case "openMvPlayer": return onOpenMvPlayerSync(params);
+                // 向正在运行的 MvPlayerActivity 传递已解析的下一个 MV URL
+                case "loadMvVideo": return onLoadMvVideoSync(params);
                 default:
                     return "{\"__nativeError\":\"Unknown method: " + method + "\"}";
             }
@@ -352,7 +384,9 @@ public class NativeAudioPlugin {
                 }
             }
 
-            if (!playingFromCache && cacheKey != null) {
+            // 启动恢复时跳过缓存下载，避免 switchToCachedSource 中断播放
+            String suppressSwitch = params.get("suppressCacheSwitch");
+            if (!playingFromCache && cacheKey != null && !"true".equals(suppressSwitch)) {
                 // 延迟 3 秒启动缓存下载，优先保证 MediaPlayer 缓冲，减少带宽竞争
                 final String downloadCacheKey = cacheKey;
                 final String downloadUrl = url;
@@ -360,6 +394,7 @@ public class NativeAudioPlugin {
                 Runnable cacheRunnable = () -> {
                     if (downloadCacheKey.equals(currentCacheKey)) {
                         downloadCm.startDownload(downloadCacheKey, downloadUrl, new AudioCacheManager.DownloadProgressCallback() {
+
                             @Override
                             public void onProgress(String key, float percent) {
                                 emitEvent("cacheProgress", "{\"cacheKey\":\"" + key + "\",\"percent\":" + percent + "}");
@@ -367,7 +402,8 @@ public class NativeAudioPlugin {
                             @Override
                             public void onComplete(String key) {
                                 emitEvent("cacheProgress", "{\"cacheKey\":\"" + key + "\",\"percent\":1.0}");
-                                switchToCachedSource(key);
+                                // 不在播放中途切换 MediaPlayer —— 缓存文件会在下次播放该歌曲时
+                                // 通过 isCached() 检查自动使用。中途切换会导致音频叠加/断裂。
                             }
                         });
                         Log.i(TAG, "Delayed cache download started: " + downloadCacheKey);
@@ -1254,7 +1290,7 @@ public class NativeAudioPlugin {
     // -- Time updates --
 
     /** 前台更新间隔 (ms) */
-    private static final long TIME_UPDATE_INTERVAL_FOREGROUND = 500;
+    private static final long TIME_UPDATE_INTERVAL_FOREGROUND = 200;
     /** 后台更新间隔 (ms) — 降低 evalJs 调用频率以省电 */
     private static final long TIME_UPDATE_INTERVAL_BACKGROUND = 3000;
 
@@ -1327,6 +1363,15 @@ public class NativeAudioPlugin {
                 "cb(" + jsonPayload + ");});}"
             );
         });
+    }
+
+    /**
+     * 静态事件发射方法，供 MvPlayerActivity 等非 activityRef 持有者调用。
+     */
+    public static void emitStaticEvent(String eventName, String jsonPayload) {
+        if (instance != null) {
+            instance.emitEvent(eventName, jsonPayload);
+        }
     }
 
     private void runOnUi(Runnable r) {
@@ -1753,6 +1798,9 @@ public class NativeAudioPlugin {
 
     public void release() {
         releasePlayer();
+        if (nativeVideoPlayer != null) {
+            nativeVideoPlayer.release();
+        }
     }
 
     // ── AudioFX: Equalizer & Effects ──
@@ -1901,6 +1949,11 @@ public class NativeAudioPlugin {
     /**
      * 缓存下载完成后，将 MediaPlayer 的数据源从远程 URL 切换到本地缓存文件。
      * 由于 MediaPlayer 不支持运行时 setDataSource，需创建新实例。
+     *
+     * 注意：当前未在播放中途调用此方法，因为新旧播放器切换会导致约 400ms 的
+     * 音频叠加（双播放器同时输出）或音频空白，表现为顿挫。
+     * 缓存文件会在下次播放时通过 isCached() 检查自动使用。
+     * 保留此方法以备将来可能的 gapless 播放等场景使用。
      */
     private void switchToCachedSource(String cacheKey) {
         if (cacheKey == null || !cacheKey.equals(currentCacheKey)) return;
@@ -2041,5 +2094,146 @@ public class NativeAudioPlugin {
         } catch (Exception e) {
             Log.w(TAG, "Failed to reapply EQ gains", e);
         }
+    }
+
+    // ── 原生视频播放器桥接方法（ExoPlayer + FFmpeg 软件解码降级） ──
+
+    private String onLoadNativeVideoSync(Map<String, String> params) {
+        if (nativeVideoPlayer == null) return "{\"__nativeError\":\"video player not initialized\"}";
+        String url = params.get("url");
+        String decodeMode = params.get("decodeMode");
+        if (url == null || url.isEmpty()) return "{\"__nativeError\":\"url is required\"}";
+        if (decodeMode == null || decodeMode.isEmpty()) decodeMode = "hardware";
+        return nativeVideoPlayer.loadVideo(url, decodeMode);
+    }
+
+    private String onPlayNativeVideoSync() {
+        if (nativeVideoPlayer == null) return "{\"__nativeError\":\"video player not initialized\"}";
+        return nativeVideoPlayer.play();
+    }
+
+    private String onPauseNativeVideoSync() {
+        if (nativeVideoPlayer == null) return "{\"__nativeError\":\"video player not initialized\"}";
+        return nativeVideoPlayer.pause();
+    }
+
+    private String onSeekNativeVideoSync(Map<String, String> params) {
+        if (nativeVideoPlayer == null) return "{\"__nativeError\":\"video player not initialized\"}";
+        try {
+            long timeMs = Long.parseLong(params.getOrDefault("timeMs", "0"));
+            return nativeVideoPlayer.seek(timeMs);
+        } catch (NumberFormatException e) {
+            return "{\"__nativeError\":\"invalid timeMs\"}";
+        }
+    }
+
+    private String onReleaseNativeVideoSync() {
+        if (nativeVideoPlayer == null) return "{\"__nativeError\":\"video player not initialized\"}";
+        return nativeVideoPlayer.release();
+    }
+
+    private String onGetNativeVideoTimeSync() {
+        if (nativeVideoPlayer == null) return "{\"currentTime\":0}";
+        return nativeVideoPlayer.getCurrentTime();
+    }
+
+    private String onGetNativeVideoDurationSync() {
+        if (nativeVideoPlayer == null) return "{\"duration\":0}";
+        return nativeVideoPlayer.getDuration();
+    }
+
+    private String onShowNativeVideoSurfaceSync() {
+        if (nativeVideoPlayer == null) return "{\"__nativeError\":\"video player not initialized\"}";
+        return nativeVideoPlayer.showSurface();
+    }
+
+    private String onHideNativeVideoSurfaceSync() {
+        if (nativeVideoPlayer == null) return "{\"__nativeError\":\"video player not initialized\"}";
+        return nativeVideoPlayer.hideSurface();
+    }
+
+    private String onSetNativeVideoSurfaceBoundsSync(Map<String, String> params) {
+        if (nativeVideoPlayer == null) return "{\"__nativeError\":\"video player not initialized\"}";
+        try {
+            int left = Integer.parseInt(params.getOrDefault("left", "0"));
+            int top = Integer.parseInt(params.getOrDefault("top", "0"));
+            int width = Integer.parseInt(params.getOrDefault("width", "0"));
+            int height = Integer.parseInt(params.getOrDefault("height", "0"));
+            return nativeVideoPlayer.setSurfaceBounds(left, top, width, height);
+        } catch (NumberFormatException e) {
+            return "{\"__nativeError\":\"invalid bounds parameters\"}";
+        }
+    }
+
+    // ── 原生 MV 播放 Activity ──
+
+    private String onOpenMvPlayerSync(Map<String, String> params) {
+        MainActivity a = getActivity();
+        if (a == null) return "{\"__nativeError\":\"activity destroyed\"}";
+
+        String url = params.get("url");
+        if (url == null || url.isEmpty()) return "{\"__nativeError\":\"url is required\"}";
+
+        Intent intent = new Intent(a, MvPlayerActivity.class);
+        intent.putExtra(MvPlayerActivity.EXTRA_VIDEO_URL, url);
+        intent.putExtra(MvPlayerActivity.EXTRA_TITLE, params.getOrDefault("title", ""));
+        intent.putExtra(MvPlayerActivity.EXTRA_AUTHOR, params.getOrDefault("author", ""));
+        intent.putExtra(MvPlayerActivity.EXTRA_COVER_URL, params.getOrDefault("coverUrl", ""));
+        intent.putExtra(MvPlayerActivity.EXTRA_HASH, params.getOrDefault("hash", ""));
+        String posStr = params.get("position");
+        if (posStr != null && !posStr.isEmpty()) {
+            try {
+                intent.putExtra(MvPlayerActivity.EXTRA_POSITION, Long.parseLong(posStr));
+            } catch (NumberFormatException ignored) {}
+        }
+        // 播放列表参数
+        String playlist = params.get("playlist");
+        if (playlist != null && !playlist.isEmpty()) {
+            intent.putExtra(MvPlayerActivity.EXTRA_PLAYLIST, playlist);
+        }
+        String startIndex = params.get("startIndex");
+        if (startIndex != null && !startIndex.isEmpty()) {
+            try {
+                intent.putExtra(MvPlayerActivity.EXTRA_START_INDEX, Integer.parseInt(startIndex));
+            } catch (NumberFormatException ignored) {}
+        }
+        // 画质片源列表（供原生层画质选择和自动换源）
+        String sourceHashes = params.get("sourceHashes");
+        if (sourceHashes != null && !sourceHashes.isEmpty()) {
+            intent.putExtra(MvPlayerActivity.EXTRA_SOURCE_HASHES, sourceHashes);
+        }
+        // 横屏自动全屏标记
+        String autoFullscreen = params.get("autoFullscreen");
+        if (autoFullscreen != null) {
+            intent.putExtra(MvPlayerActivity.EXTRA_AUTO_FULLSCREEN, autoFullscreen);
+        }
+        a.startActivity(intent);
+        return "{\"opened\":true}";
+    }
+
+    /**
+     * 向正在运行的 MvPlayerActivity 传递已解析的下一个 MV URL。
+     * 由 Vue 层调用，用于播放列表上下曲切换。
+     */
+    private static int parseIntOrDefault(String value, int defaultValue) {
+        try { return Integer.parseInt(value); }
+        catch (NumberFormatException e) { return defaultValue; }
+    }
+
+    private String onLoadMvVideoSync(Map<String, String> params) {
+        String url = params.get("url");
+        if (url == null || url.isEmpty()) return "{\"__nativeError\":\"url is required\"}";
+
+        final String title = params.getOrDefault("title", "");
+        final String author = params.getOrDefault("author", "");
+        final String coverUrl = params.getOrDefault("coverUrl", "");
+        final int index = parseIntOrDefault(params.getOrDefault("index", "0"), 0);
+
+        MvPlayerActivity activity = MvPlayerActivity.currentInstance;
+        if (activity == null) return "{\"__nativeError\":\"MvPlayerActivity not active\"}";
+
+        final String finalUrl = url;
+        activity.runOnUiThread(() -> activity.loadNextVideo(finalUrl, title, author, coverUrl, index));
+        return "{\"loaded\":true}";
     }
 }

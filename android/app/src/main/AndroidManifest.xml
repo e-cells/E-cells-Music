@@ -60,6 +60,18 @@
 
         </activity>
 
+        <activity
+            android:name=".MvPlayerActivity"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|screenLayout|smallestScreenSize|uiMode"
+            android:theme="@style/AppTheme.NoActionBar"
+            android:screenOrientation="unspecified"
+            android:exported="false"
+            android:parentActivityName=".MainActivity">
+            <meta-data
+                android:name="android.support.PARENT_ACTIVITY"
+                android:value=".MainActivity" />
+        </activity>
+
         <service
             android:name=".MediaNotificationService"
             android:exported="true"

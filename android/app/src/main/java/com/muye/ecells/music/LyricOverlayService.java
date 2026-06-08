@@ -422,12 +422,18 @@ public class LyricOverlayService extends Service {
     }
 
     private int findLineIndex(long timeMs) {
-        int idx = -1;
-        for (int i = 0; i < lyrics.size(); i++) {
-            if (lyrics.get(i).timeMs <= timeMs) idx = i;
-            else break;
+        int lo = 0, hi = lyrics.size() - 1;
+        int result = -1;
+        while (lo <= hi) {
+            int mid = (lo + hi) >>> 1;
+            if (lyrics.get(mid).timeMs <= timeMs) {
+                result = mid;
+                lo = mid + 1;
+            } else {
+                hi = mid - 1;
+            }
         }
-        return idx;
+        return result;
     }
 
     private void startNativeLyricTimer() {

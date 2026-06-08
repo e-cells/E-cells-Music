@@ -446,7 +446,7 @@ export const useLyricStore = defineStore('lyric', {
 
       this.tips = this.lines.length > 0 ? '歌词已加载' : '暂无歌词';
     },
-    updateCurrentIndex(currentTime: number, isLyricViewOpen = false) {
+    updateCurrentIndex(currentTime: number, isLyricViewOpen = false, skipHighlight = false) {
       if (this.lines.length === 0) {
         this.currentIndex = -1;
         return;
@@ -489,6 +489,8 @@ export const useLyricStore = defineStore('lyric', {
       if (this.currentIndex < 0) return;
       // 逐字高亮只在歌词页打开时更新
       if (!isLyricViewOpen) return;
+      // 逐字渐变由 DOM 直接驱动时跳过 highlighted 属性更新，减少每帧开销
+      if (skipHighlight) return;
       const currentLine = this.lines[this.currentIndex];
       currentLine.characters.forEach((char) => {
         const shouldHighlight = currentTimeMs >= char.startTime;

@@ -784,27 +784,53 @@ const handleKeydown = (event: KeyboardEvent) => {
 };
 
 // ── 逐字歌词实时进度（毫秒） ──
-const LYRIC_LOOKAHEAD = 300;
-const playSeekMs = ref(0);
+const LYRIC_LOOKAHEAD = 0;
+// playSeekMs 不再用 ref（无需驱动模板），改为普通变量避免每帧触发 Vue 响应式 setter
+let playSeekMs = 0;
 let seekBaseMs = 0;
 let seekAnchorTick = 0;
 
 // 记录上一次滚动到的行索引，用于在 RAF 中检测行变化并直接滚动
 let rafLastScrolledIndex = -1;
 
+// 逐字渐变 DOM ref：直接操作 DOM 绕过 Vue 响应式，大幅减少低端设备开销
+const yrcCharsRef = ref<HTMLElement[]>([]);
+// 记录上一帧各字符的 backgroundPositionX 值，避免重复写入相同样式
+const yrcLastPosCache: string[] = [];
+
 const { pause: pauseSeekRaf, resume: resumeSeekRaf } = useRafFn(() => {
   if (playerStore.isPlaying) {
-    playSeekMs.value = seekBaseMs + (performance.now() - seekAnchorTick);
+    playSeekMs = seekBaseMs + (performance.now() - seekAnchorTick);
     // 用插值时间驱动歌词行索引（60fps），替代原生回调（~200ms 一次）
     // 加上提前量让歌词先于歌声滚动到位，消除感知延迟
     if (lyricStore.lines.length > 0 && !isProgressDragging.value) {
-      const interpolatedTimeSec = (playSeekMs.value + LYRIC_LOOKAHEAD) / 1000;
-      lyricStore.updateCurrentIndex(interpolatedTimeSec, true);
+      const interpolatedTimeSec = (playSeekMs + LYRIC_LOOKAHEAD) / 1000;
+      // skipHighlight=true：逐字渐变由下方 DOM 直接驱动，不再更新 highlighted 属性
+      lyricStore.updateCurrentIndex(interpolatedTimeSec, true, true);
       // 直接在 RAF 帧内滚动，绕过 Vue 响应式 watcher 的延迟
       // 播放时不使用动画，直接瞬移到位（lookahead 保证提前量）
       if (lyricStore.currentIndex !== rafLastScrolledIndex && !isUserScrollingLyrics.value) {
         rafLastScrolledIndex = lyricStore.currentIndex;
         scrollToCurrentLine(false);
+      }
+      // ── 逐字渐变：直接 DOM 操作，绕过 Vue 响应式和虚拟 DOM diff ──
+      const ci = lyricStore.currentIndex;
+      const line = ci >= 0 ? lyricStore.lines[ci] : null;
+      const els = yrcCharsRef.value;
+      if (line?.characters?.length && els.length) {
+        const seekMs = playSeekMs + LYRIC_LOOKAHEAD;
+        const chars = line.characters;
+        for (let i = 0; i < chars.length && i < els.length; i++) {
+          const char = chars[i];
+          const duration = Math.max((char.endTime || 0) - (char.startTime || 0), 0.001);
+          const progress = Math.max(Math.min((seekMs - (char.startTime || 0)) / duration, 1), 0);
+          const posValue = `${100 - progress * 100}%`;
+          // 仅在值变化时写入 DOM，减少不必要的样式计算
+          if (yrcLastPosCache[i] !== posValue) {
+            yrcLastPosCache[i] = posValue;
+            els[i].style.backgroundPositionX = posValue;
+          }
+        }
       }
     }
   }
@@ -813,28 +839,12 @@ const { pause: pauseSeekRaf, resume: resumeSeekRaf } = useRafFn(() => {
 const syncSeekAnchor = () => {
   seekBaseMs = Math.round((playerStore.currentTime || 0) * 1000);
   seekAnchorTick = performance.now();
-  playSeekMs.value = seekBaseMs;
+  playSeekMs = seekBaseMs;
 };
 
 // 已播/未播颜色（用于逐字渐变）
 const yrcPlayedColor = computed(() => effectivePlayedColor.value);
 const yrcUnplayedColor = computed(() => effectiveUnplayedColor.value);
-
-const getYrcStyle = (char: { startTime: number; endTime: number }, lineIndex: number) => {
-  const line = lyricStore.lines[lineIndex];
-  if (!line?.characters?.length) return { backgroundPositionX: '100%' };
-  const seekMs = playSeekMs.value + LYRIC_LOOKAHEAD;
-  const lineStart = line.characters[0].startTime;
-  const lineEnd = line.characters[line.characters.length - 1].endTime;
-  const isLineActive =
-    (seekMs >= lineStart && seekMs < lineEnd) || currentIndex.value === lineIndex;
-  if (!isLineActive) {
-    return { backgroundPositionX: seekMs >= (char.endTime || 0) ? '0%' : '100%' };
-  }
-  const duration = Math.max((char.endTime || 0) - (char.startTime || 0), 0.001);
-  const progress = Math.max(Math.min((seekMs - (char.startTime || 0)) / duration, 1), 0);
-  return { backgroundPositionX: `${100 - progress * 100}%` };
-};
 
 const isYrcLine = (line: { characters: unknown[] }) => (line.characters?.length ?? 0) > 1;
 
@@ -1243,13 +1253,13 @@ onUnmounted(() => {
                   />
                 </div>
               </div>
-              <div class="mt-4 md:mt-7 w-full max-w-[420px] space-y-1 md:space-y-2 text-center">
+              <div class="mt-3 md:mt-4 w-full max-w-[420px] space-y-0.5 md:space-y-1 text-center">
                 <h1
-                  class="truncate text-[20px] md:text-[26px] font-semibold tracking-[0.02em] text-black/95 dark:text-white/95"
+                  class="truncate text-[18px] md:text-[24px] font-semibold tracking-[0.02em] text-black/95 dark:text-white/95"
                 >
                   {{ currentTrack?.title || '未在播放' }}
                 </h1>
-                <p class="truncate text-[13px] md:text-[14px] font-semibold text-black/60 dark:text-white/60">
+                <p class="truncate text-[12px] md:text-[13px] font-semibold text-black/60 dark:text-white/60">
                   {{ currentTrack?.artist || '点击播放开始同步歌词' }}
                 </p>
                 <p
@@ -1362,13 +1372,12 @@ onUnmounted(() => {
                             <span
                               v-for="(char, ci) in line.characters"
                               :key="ci"
+                              ref="yrcCharsRef"
                               class="lyric-yrc-char"
-                              :style="[
-                                {
-                                  backgroundImage: `linear-gradient(to right, ${yrcPlayedColor} 50%, ${yrcUnplayedColor} 50%)`,
-                                },
-                                getYrcStyle(char, index),
-                              ]"
+                              :style="{
+                                backgroundImage: `linear-gradient(to right, ${yrcPlayedColor} 50%, ${yrcUnplayedColor} 50%)`,
+                                backgroundPositionX: '100%',
+                              }"
                               >{{ char.text }}</span
                             >
                           </template>
@@ -1610,7 +1619,7 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <div class="lyric-controls-row flex items-center justify-center gap-6 md:gap-5 mt-2 md:-mt-6 z-10 pointer-events-none">
+          <div class="lyric-controls-row flex items-center justify-center gap-6 md:gap-5 mt-1 md:mt-0 z-10 pointer-events-none">
             <div class="pointer-events-auto flex items-center gap-6 md:gap-5">
               <Tooltip :content="playModeLabel" side="top">
                 <template #trigger>
@@ -1845,13 +1854,13 @@ body:has(.lyric-view) .drawer-panel {
 
 .lyric-ambient-photo {
   opacity: 0.55;
-  filter: blur(60px) saturate(1.2) brightness(1.1);
+  filter: blur(30px) saturate(1.2) brightness(1.1);
   transform: scale(1.1);
 }
 
 .dark .lyric-ambient-photo {
   opacity: 0.45;
-  filter: blur(60px) saturate(0.9) brightness(0.7);
+  filter: blur(30px) saturate(0.9) brightness(0.7);
 }
 
 .lyric-portrait-overlay {
@@ -2073,7 +2082,7 @@ body:has(.lyric-view) .drawer-panel {
 
 .lyric-info-card {
   width: min(100%, 420px);
-  padding: 18px 8px 12px;
+  padding: 10px 8px 6px;
 }
 
 .lyric-controls-surface {
@@ -2103,14 +2112,14 @@ body:has(.lyric-view) .drawer-panel {
 /* 响应式：竖屏下缩放封面 */
 .lyric-cover-shell {
   position: relative;
-  width: clamp(160px, 25vh, 400px);
-  height: clamp(160px, 25vh, 400px);
+  width: clamp(120px, 22vh, 400px);
+  height: clamp(120px, 22vh, 400px);
 }
 
 @media (min-width: 768px) {
   .lyric-cover-shell {
-    width: clamp(240px, 38vh, 400px);
-    height: clamp(240px, 38vh, 400px);
+    width: clamp(160px, 30vh, 400px);
+    height: clamp(160px, 30vh, 400px);
   }
 }
 
@@ -2315,6 +2324,7 @@ body:has(.lyric-view) .drawer-panel {
   align-items: center;
   justify-content: center;
   padding: 0 8px;
+  contain: layout style;
 }
 
 .lyric-line {
@@ -2327,9 +2337,7 @@ body:has(.lyric-view) .drawer-panel {
   cursor: pointer;
   transition:
     opacity 0.1s ease,
-    transform 0.1s ease,
-    background-color 0.1s ease,
-    box-shadow 0.1s ease;
+    transform 0.1s ease;
 }
 
 .lyric-line > span:first-child {
@@ -2398,7 +2406,6 @@ body:has(.lyric-view) .drawer-panel {
   background-size: 200% 100%;
   background-repeat: no-repeat;
   background-position-x: 100%;
-  will-change: background-position-x;
 }
 
 .lyric-character {
@@ -2686,5 +2693,22 @@ body:has(.lyric-view) .drawer-panel {
 .portrait-mode .lyric-controls-surface [class*='badge'] {
   background-color: var(--pb-badge-bg, #000) !important;
   color: var(--pb-badge-fg, #fff) !important;
+}
+
+/* ── 竖屏写真模式：歌词区域渐变暗化 + 文字阴影，确保逐字渐变可见 ── */
+.portrait-mode .lyric-stage {
+  background: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0.1) 0%,
+    rgba(0, 0, 0, 0.35) 25%,
+    rgba(0, 0, 0, 0.35) 75%,
+    rgba(0, 0, 0, 0.1) 100%
+  );
+}
+.portrait-mode .lyric-line > span:first-child {
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.55);
+}
+.portrait-mode .lyric-yrc-char {
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.55);
 }
 </style>

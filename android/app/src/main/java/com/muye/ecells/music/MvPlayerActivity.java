@@ -797,6 +797,15 @@ public class MvPlayerActivity extends AppCompatActivity {
             videoContainer.setLayoutParams(params);
             enterImmersiveMode();
             btnFullscreen.setImageResource(R.drawable.ic_fullscreen_exit);
+
+            // 监听 WindowInsets，让 PlayerView 避开导航栏和状态栏
+            ViewCompat.setOnApplyWindowInsetsListener(videoContainer, (v, insets) -> {
+                int navBarHeight = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom;
+                int statusBarHeight = insets.getInsets(WindowInsetsCompat.Type.systemBars()).top;
+                // 设置 PlayerView 的 padding，使视频内容等比缩放到系统栏内侧
+                playerView.setPadding(0, statusBarHeight, 0, navBarHeight);
+                return insets;
+            });
         } else {
             // 竖屏：视频 + 信息区
             bottomContainer.setVisibility(View.VISIBLE);
@@ -808,6 +817,10 @@ public class MvPlayerActivity extends AppCompatActivity {
             videoContainer.setLayoutParams(params);
             exitImmersiveMode();
             btnFullscreen.setImageResource(R.drawable.ic_fullscreen);
+
+            // 竖屏不需要 padding
+            playerView.setPadding(0, 0, 0, 0);
+            ViewCompat.setOnApplyWindowInsetsListener(videoContainer, null);
         }
     }
 

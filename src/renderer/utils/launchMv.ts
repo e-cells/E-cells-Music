@@ -11,6 +11,7 @@ import { usePlayerStore } from '@/stores/player';
 import { useToastStore } from '@/stores/toast';
 import { useMvPlaylistStore } from '@/stores/mvPlaylist';
 import { isGeckoView, NativeMvPlayerBridge } from '@/utils/nativeBridge';
+import router from '@/router';
 
 export interface LaunchMvOptions {
   hash: string;
@@ -23,13 +24,11 @@ export interface LaunchMvOptions {
 
 const isMobileNative = isGeckoView || /Android/i.test(navigator.userAgent);
 
-/** 移动端优先 H.264，否则选第一个 */
+/** 所有环境优先 H.264（原生软解码需要，Web 浏览器兼容性最佳） */
 const pickPreferredSource = (sources: VideoSource[]): VideoSource | null => {
   if (!sources.length) return null;
-  if (isMobileNative) {
-    const h264 = sources.find((s) => s.codec === 'H.264');
-    if (h264) return h264;
-  }
+  const h264 = sources.find((s) => s.codec === 'H.264');
+  if (h264) return h264;
   return sources[0];
 };
 
@@ -58,7 +57,19 @@ export async function launchMv(options: LaunchMvOptions): Promise<void> {
 
   if (!hash && !videoId) return;
   if (!isGeckoView) {
-    useToastStore().show('MV 播放需要原生环境支持');
+    // Web 端：导航到 MV 详情页，由详情页的 HTML5 播放器处理
+    router.push({
+      name: 'mv-detail',
+      params: { id: hash || videoId },
+      query: {
+        ...(hash && { hash }),
+        ...(videoId && { videoId }),
+        ...(albumAudioId && { albumAudioId }),
+        ...(title && { title }),
+        ...(artist && { artist }),
+        ...(cover && { cover }),
+      },
+    });
     return;
   }
 
@@ -187,7 +198,20 @@ export async function launchMvWithPlaylist(options: {
 
   if (!playlist.length || startIndex < 0 || startIndex >= playlist.length) return;
   if (!isGeckoView) {
-    useToastStore().show('MV 播放需要原生环境支持');
+    // Web 端：导航到 MV 详情页
+    const item = playlist[startIndex];
+    router.push({
+      name: 'mv-detail',
+      params: { id: item.hash || options.hash || options.videoId },
+      query: {
+        hash: item.hash || options.hash,
+        ...(options.videoId && { videoId: options.videoId }),
+        ...(options.albumAudioId && { albumAudioId: options.albumAudioId }),
+        title: item.title || options.title,
+        artist: item.artist || options.artist,
+        cover: item.coverUrl || options.cover,
+      },
+    });
     return;
   }
 
@@ -205,7 +229,6 @@ export async function launchMvWithPlaylist(options: {
   const loadingToastId = toastStore.show('正在加载 MV ...');
 
   try {
-    const isMobileNative = isGeckoView || /Android/i.test(navigator.userAgent);
     const isLandscape =
       typeof window !== 'undefined' && window.innerWidth > window.innerHeight;
 

@@ -17,6 +17,7 @@ import { usePlayerStore } from '@/stores/player';
 import { useSettingStore } from '@/stores/setting';
 import { useMvPlaylistStore } from '@/stores/mvPlaylist';
 import { isGeckoView, NativeMvPlayerBridge } from '@/utils/nativeBridge';
+import MvHtmlPlayer from '@/components/mv/MvHtmlPlayer.vue';
 import { iconPlay } from '@/icons';
 
 const route = useRoute();
@@ -33,6 +34,8 @@ const currentVersionIndex = ref(0);
 const currentSourceHash = ref('');
 const playbackError = ref('');
 const isLaunching = ref(false);
+const webPlayerUrl = ref('');
+const isWebPlayerActive = ref(false);
 
 const isMobileNative = isGeckoView || /Android/i.test(navigator.userAgent);
 
@@ -79,7 +82,7 @@ const publishText = computed(() =>
 
 // 封面区域是否可点击（数据已加载且有可用片源）
 const canPlay = computed(() =>
-  !loading.value && !isLaunching.value && currentSourceHash.value && isGeckoView,
+  !loading.value && !isLaunching.value && !!currentSourceHash.value,
 );
 
 const buildInitialMeta = (): VideoMeta => ({
@@ -128,10 +131,9 @@ const mergeMeta = (nextMeta: VideoMeta | null) => {
 
 const pickPreferredSource = (sources: VideoSource[]): VideoSource | null => {
   if (!sources.length) return null;
-  if (isMobileNative) {
-    const h264 = sources.find((s) => s.codec === 'H.264');
-    if (h264) return h264;
-  }
+  // 所有环境都优先 H.264（原生软解码需要，Web 浏览器兼容性最佳）
+  const h264 = sources.find((s) => s.codec === 'H.264');
+  if (h264) return h264;
   return sources[0];
 };
 
@@ -140,7 +142,7 @@ const syncCurrentSource = () => {
   const sources = meta.value.sources ?? [];
 
   if (currentSourceHash.value && sources.some((s) => s.hash === currentSourceHash.value)) {
-    if (!isMobileNative) return;
+    // Web 端和原生端都检查：如果当前选中的是 H.265，尝试切换到 H.264
     const current = sources.find((s) => s.hash === currentSourceHash.value);
     if (current?.codec === 'H.265') {
       const h264 = sources.find((s) => s.codec === 'H.264');
@@ -166,11 +168,48 @@ let loadVideoGeneration = 0;
 
 const handlePlayClick = async () => {
   if (!currentSourceHash.value || isLaunching.value) return;
-  if (!isGeckoView) {
-    playbackError.value = 'MV 播放需要原生环境支持';
+
+  // 原生环境：走原有 Activity 流程
+  if (isGeckoView) {
+    const gen = ++loadVideoGeneration;
+    isLaunching.value = true;
+    sourceLoading.value = true;
+    playbackError.value = '';
+
+    try {
+      const hash = currentSourceHash.value;
+      const response = await getVideoUrl(hash);
+      if (gen !== loadVideoGeneration) return;
+      const url = extractVideoUrl(response, hash, isMobileNative);
+      if (!url) throw new Error('empty-url');
+
+      await pauseMusicPlayback();
+
+      // 设置 MV 播放列表 store 并注册事件监听
+      mvPlaylistStore.setupListeners();
+
+      // 启动原生 MV 播放 Activity（单个 MV，无播放列表）
+      await NativeMvPlayerBridge.openMvPlayer({
+        url,
+        title: title.value,
+        author: authorLine.value,
+        coverUrl: cover.value,
+        hash,
+      });
+    } catch {
+      if (gen !== loadVideoGeneration) return;
+      playbackError.value = '当前视频暂时无法播放';
+      toastStore.loadFailed('MV');
+    } finally {
+      if (gen === loadVideoGeneration) {
+        sourceLoading.value = false;
+        isLaunching.value = false;
+      }
+    }
     return;
   }
 
+  // Web 环境：获取 URL 并启动 HTML5 播放器
   const gen = ++loadVideoGeneration;
   isLaunching.value = true;
   sourceLoading.value = true;
@@ -180,22 +219,12 @@ const handlePlayClick = async () => {
     const hash = currentSourceHash.value;
     const response = await getVideoUrl(hash);
     if (gen !== loadVideoGeneration) return;
-    const url = extractVideoUrl(response, hash, isMobileNative);
+    const url = extractVideoUrl(response, hash, false);
     if (!url) throw new Error('empty-url');
 
     await pauseMusicPlayback();
-
-    // 设置 MV 播放列表 store 并注册事件监听
-    mvPlaylistStore.setupListeners();
-
-    // 启动原生 MV 播放 Activity（单个 MV，无播放列表）
-    await NativeMvPlayerBridge.openMvPlayer({
-      url,
-      title: title.value,
-      author: authorLine.value,
-      coverUrl: cover.value,
-      hash,
-    });
+    webPlayerUrl.value = url;
+    isWebPlayerActive.value = true;
   } catch {
     if (gen !== loadVideoGeneration) return;
     playbackError.value = '当前视频暂时无法播放';
@@ -296,8 +325,20 @@ onBeforeUnmount(() => {
     </div>
 
     <template v-else>
+      <div class="mv-content-wrap">
+      <!-- Web 端 HTML5 播放器（替代封面区域） -->
+      <MvHtmlPlayer
+        v-if="isWebPlayerActive && webPlayerUrl"
+        :url="webPlayerUrl"
+        :title="title"
+        :cover-url="cover"
+        :autoplay="true"
+        class="mv-cover-hero"
+        @close="isWebPlayerActive = false"
+        @error="(msg: string) => { playbackError = msg; isWebPlayerActive = false; }"
+      />
       <!-- 封面大图 + 播放按钮 -->
-      <div class="mv-cover-hero" @click="handlePlayClick">
+      <div v-else class="mv-cover-hero" @click="handlePlayClick">
         <Image v-if="cover" :src="cover" :alt="title" class="mv-cover-hero-img" />
         <div class="mv-cover-hero-overlay">
           <div v-if="isLaunching || sourceLoading" class="mv-cover-loading">
@@ -315,6 +356,7 @@ onBeforeUnmount(() => {
             <span>{{ playbackError }}</span>
           </div>
         </div>
+      </div>
       </div>
 
       <!-- 详情信息 -->
@@ -425,6 +467,12 @@ onBeforeUnmount(() => {
 
 <style scoped>
 @reference "@/style.css";
+
+/* === 封面/播放器与详情区同宽容器 === */
+.mv-content-wrap {
+  width: min(1120px, calc(100% - 32px));
+  margin: 0 auto;
+}
 
 /* === 封面大图 Hero === */
 .mv-cover-hero {
@@ -781,6 +829,10 @@ onBeforeUnmount(() => {
   }
 
   .mv-detail-wrap {
+    width: calc(100% - 24px);
+  }
+
+  .mv-content-wrap {
     width: calc(100% - 24px);
   }
 

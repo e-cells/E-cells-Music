@@ -47,6 +47,7 @@ let measureFrame = 0;
 let resizeObserver: ResizeObserver | null = null;
 let mutationObserver: MutationObserver | null = null;
 let observedChild: Element | null = null;
+let mutationTimer = 0;
 
 const effectiveScrollbarInset = computed(() => Math.max(0, props.scrollbarInset));
 
@@ -151,6 +152,10 @@ const disconnectObservers = () => {
   mutationObserver?.disconnect();
   mutationObserver = null;
   observedChild = null;
+  if (mutationTimer) {
+    clearTimeout(mutationTimer);
+    mutationTimer = 0;
+  }
 };
 
 const connectObservers = () => {
@@ -181,13 +186,18 @@ const connectObservers = () => {
       }
       observedChild = nextChild;
     }
-    scheduleUpdate();
+    // 节流：避免短时间内大量 DOM 属性变化（如 CSS hover/active）导致频繁重算
+    if (mutationTimer) return;
+    mutationTimer = window.setTimeout(() => {
+      mutationTimer = 0;
+      scheduleUpdate();
+    }, 100);
   });
+  // 仅监听子节点增删，不监听属性和字符数据变化
+  // CSS 属性变化（hover/active 状态切换）不影响滚动几何
   mutationObserver.observe(wrapRef.value, {
     childList: true,
     subtree: true,
-    attributes: true,
-    characterData: true,
   });
 };
 
@@ -391,6 +401,7 @@ watch(
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  contain: content;
 }
 
 .scrollbar-wrap {

@@ -11,6 +11,7 @@ import RefreshIcon from '@/components/ui/RefreshIcon.vue';
 import Scrollbar from '@/components/ui/Scrollbar.vue';
 import Switch from '@/components/ui/Switch.vue';
 import ImportPlaylistDialog from '@/components/music/ImportPlaylistDialog.vue';
+import { isLowPerformance } from '@/utils/performanceProfile';
 import {
   iconClock,
   iconCloud,
@@ -33,6 +34,8 @@ import { useToastStore } from '@/stores/toast';
 defineOptions({
   inheritAttrs: false,
 });
+
+const lowPerf = isLowPerformance();
 
 const router = useRouter();
 const route = useRoute();
@@ -379,7 +382,7 @@ watch(
 <template>
   <aside
     v-bind="attrs"
-    class="sidebar h-full flex flex-col bg-bg-sidebar border-r border-border-light select-none transition-all duration-300 relative overflow-hidden"
+    class="sidebar h-full flex flex-col bg-bg-sidebar border-r border-border-light select-none relative overflow-hidden"
   >
     <div class="sidebar-accent-gradient"></div>
     <div :class="['w-full shrink-0 relative', isMac ? 'h-12' : 'h-6']">
@@ -393,10 +396,10 @@ watch(
     >
       <div :class="['px-4 pb-4 no-drag', isMac ? 'mt-0' : 'mt-0']">
         <div
-          class="user-info-card flex items-center overflow-hidden bg-bg-info-card border border-black/[0.08] dark:border-white/10 rounded-[20px] p-1 transition-all duration-200"
+          class="user-info-card flex items-center overflow-hidden bg-bg-info-card border border-black/[0.08] dark:border-white/10 rounded-[20px] p-1 transition-colors duration-150"
         >
           <div
-            class="sidebar-user-link min-w-0 flex-1 flex items-center gap-3 p-1.5 rounded-[14px] cursor-pointer transition-all active:scale-[0.98]"
+            class="sidebar-user-link min-w-0 flex-1 flex items-center gap-3 p-1.5 rounded-[14px] cursor-pointer transition-colors duration-150 active:scale-[0.98]"
             @click="navigateTo(isLoggedIn ? '/main/profile' : '/login')"
           >
             <div
@@ -421,7 +424,7 @@ watch(
           <Button
             variant="unstyled"
             size="none"
-            class="sidebar-settings-btn p-2 mr-2 rounded-[14px] text-text-secondary transition-all active:scale-90 relative z-50"
+            class="sidebar-settings-btn p-2 mr-2 rounded-[14px] text-text-secondary transition-colors duration-150 active:scale-90 relative z-50"
             @click="navigateTo('/main/settings')"
           >
             <Icon :icon="iconSettings" width="19" height="19" />
@@ -444,7 +447,7 @@ watch(
               size="none"
               :disabled="isMenuItemDisabled(item)"
               :class="[
-                'sidebar-nav-item w-full flex items-center gap-3.5 px-3.5 py-2 rounded-[14px] transition-all duration-200 group active:scale-[0.98]',
+                'sidebar-nav-item w-full flex items-center gap-3.5 px-3.5 py-2 rounded-[14px] transition-colors duration-150 group active:scale-[0.98]',
                 isMenuItemDisabled(item)
                   ? 'is-disabled cursor-not-allowed opacity-35 text-text-main/55'
                   : isMenuItemActive(item)
@@ -590,7 +593,7 @@ watch(
             v-for="playlist in createdPlaylists"
             :key="playlist.listid || playlist.id"
             :class="[
-              'sidebar-library-item relative w-full flex items-center gap-3 px-3.5 py-1.5 rounded-[12px] group cursor-pointer active:scale-[0.98] transition-all',
+              'sidebar-library-item relative w-full flex items-center gap-3 px-3.5 py-1.5 rounded-[12px] group cursor-pointer active:scale-[0.98] transition-colors duration-150',
               isActivePlaylist(playlist)
                 ? 'is-active bg-primary/[0.12] text-primary'
                 : 'text-text-main/90',
@@ -598,6 +601,7 @@ watch(
             @click="navigateToPlaylist(playlist)"
           >
             <Cover
+              v-if="!lowPerf"
               :url="playlist.pic"
               :size="100"
               :width="28"
@@ -605,6 +609,12 @@ watch(
               :borderRadius="6"
               class="shrink-0"
             />
+            <div
+              v-else
+              class="w-[28px] h-[28px] shrink-0 rounded-[6px] bg-primary/10 flex items-center justify-center"
+            >
+              <Icon :icon="iconMusic" width="14" height="14" class="text-primary/40" />
+            </div>
             <div
               :class="[
                 'sidebar-playlist-label-wrap',
@@ -645,7 +655,7 @@ watch(
             v-for="playlist in favoritedPlaylists"
             :key="playlist.listid || playlist.id"
             :class="[
-              'sidebar-library-item relative w-full flex items-center gap-3 px-3.5 py-1.5 rounded-[12px] group cursor-pointer active:scale-[0.98] transition-all',
+              'sidebar-library-item relative w-full flex items-center gap-3 px-3.5 py-1.5 rounded-[12px] group cursor-pointer active:scale-[0.98] transition-colors duration-150',
               isActivePlaylist(playlist)
                 ? 'is-active bg-primary/[0.12] text-primary'
                 : 'text-text-main/90',
@@ -653,6 +663,7 @@ watch(
             @click="navigateToPlaylist(playlist)"
           >
             <Cover
+              v-if="!lowPerf"
               :url="playlist.pic"
               :size="100"
               :width="28"
@@ -660,6 +671,12 @@ watch(
               :borderRadius="6"
               class="shrink-0"
             />
+            <div
+              v-else
+              class="w-[28px] h-[28px] shrink-0 rounded-[6px] bg-primary/10 flex items-center justify-center"
+            >
+              <Icon :icon="iconMusic" width="14" height="14" class="text-primary/40" />
+            </div>
             <div class="sidebar-playlist-label-wrap has-action">
               <span
                 :class="[
@@ -701,6 +718,7 @@ watch(
   </aside>
 
   <Dialog
+    v-if="showCreateDialog"
     v-model:open="showCreateDialog"
     title="新建歌单"
     description="输入歌单名称，可选设为隐私歌单。"
@@ -747,6 +765,7 @@ watch(
   </Dialog>
 
   <Dialog
+    v-if="showRemoveDialog"
     v-model:open="showRemoveDialog"
     :title="removeDialogTitle"
     :description="removeDialogDescription"
@@ -774,7 +793,7 @@ watch(
     </template>
   </Dialog>
 
-  <ImportPlaylistDialog v-model:open="showImportDialog" />
+  <ImportPlaylistDialog v-if="showImportDialog" v-model:open="showImportDialog" />
 </template>
 
 <style scoped>
@@ -794,7 +813,8 @@ watch(
 }
 
 .sidebar-playlist-tab {
-  @apply shrink-0 whitespace-nowrap text-left text-[11px] font-semibold tracking-[0.1px] leading-none transition-colors duration-200;
+  @apply shrink-0 whitespace-nowrap text-left text-[11px] font-semibold tracking-[0.1px] leading-none;
+  transition: color 0.15s ease;
 }
 
 .sidebar-user-divider {
@@ -820,6 +840,11 @@ watch(
 .sidebar-section-action,
 .sidebar-playlist-action {
   background-color: transparent;
+}
+
+.sidebar-nav-item,
+.sidebar-library-item {
+  contain: layout style;
 }
 
 .user-info-card {
@@ -856,11 +881,13 @@ watch(
 
 .sidebar-section-action {
   @apply h-6.5 w-6.5 min-w-0 shrink-0 rounded-lg flex items-center justify-center;
-  @apply text-text-main opacity-60 transition-all disabled:opacity-30;
+  @apply text-text-main opacity-60 disabled:opacity-30;
+  transition: color 0.15s ease, opacity 0.15s ease;
 }
 
 .sidebar-playlist-label-wrap {
-  @apply flex flex-col items-start min-w-0 flex-1 transition-[padding] duration-200;
+  @apply flex flex-col items-start min-w-0 flex-1;
+  transition: padding 0.15s ease;
 }
 
 .sidebar-playlist-label-wrap.has-action {
@@ -869,7 +896,8 @@ watch(
 
 .sidebar-playlist-action {
   @apply absolute right-2.5 top-1/2 -translate-y-1/2 h-7 w-7 min-w-0 rounded-lg flex items-center justify-center text-text-main/55;
-  @apply opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto hover:text-red-500 transition-all;
+  @apply opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto hover:text-red-500;
+  transition: opacity 0.15s ease, color 0.15s ease;
 }
 
 .sidebar-playlist-action:hover {
@@ -897,7 +925,8 @@ watch(
 }
 
 .sidebar-create-menu-item {
-  @apply w-full flex items-center gap-3 px-2 py-2 rounded-[12px] transition-all;
+  @apply w-full flex items-center gap-3 px-2 py-2 rounded-[12px];
+  transition: background-color 0.15s ease;
 }
 
 .sidebar-create-menu-item:hover {

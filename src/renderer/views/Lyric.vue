@@ -112,7 +112,10 @@ const activePortraitUrl = computed(() => {
   return artistPortraitUrls.value[activePortraitIndex.value] || '';
 });
 const hasPortraitGallery = computed(
-  () => settingStore.lyricArtistBackdrop && artistPortraitUrls.value.length > 0,
+  () => settingStore.lyricArtistBackdrop,
+);
+const hasArtistPortraits = computed(
+  () => artistPortraitUrls.value.length > 0,
 );
 const backdropOpacityStyle = computed(() => ({
   opacity: settingStore.lyricBackdropOpacity / 100,
@@ -603,7 +606,7 @@ const ensureArtistBackdropForCurrentTrack = async () => {
     restartPortraitCarousel();
     // 预解码前两张写真，减少首次显示时的解码卡顿
     portraitUrls.slice(0, 2).forEach(preDecodePortrait);
-  } catch {
+  } catch (err) {
     singerPortraitCache.set(lyricHash, []);
     if (requestId !== artistBackdropRequestId) return;
     clearArtistBackdrop();
@@ -896,8 +899,9 @@ onUnmounted(() => {
     @wheel.passive="handleUserActivity"
   >
     <div class="absolute inset-0 overflow-hidden pointer-events-none">
+      <!-- 写真模式：有写真图片时显示写真 -->
       <div
-        v-if="hasPortraitGallery"
+        v-if="hasPortraitGallery && hasArtistPortraits"
         class="lyric-portrait-backdrop-wrap absolute inset-0"
         :style="backdropOpacityStyle"
       >
@@ -909,6 +913,18 @@ onUnmounted(() => {
           @load="onPortraitImageLoad"
         />
       </div>
+      <!-- 写真模式：无写真图片时用封面做背景 -->
+      <div
+        v-else-if="hasPortraitGallery && !hasArtistPortraits"
+        class="lyric-portrait-backdrop-wrap absolute inset-0"
+        :style="backdropOpacityStyle"
+      >
+        <div
+          class="lyric-portrait-backdrop"
+          :style="{ backgroundImage: coverBackgroundUrl ? `url(${coverBackgroundUrl})` : undefined, backgroundSize: 'cover', backgroundPosition: 'center' }"
+        ></div>
+      </div>
+      <!-- 非写真模式：封面模糊背景 -->
       <div
         v-else
         class="lyric-ambient-photo absolute inset-[-20px] bg-cover bg-center transition-all duration-500"

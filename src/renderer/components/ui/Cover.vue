@@ -59,7 +59,7 @@ const containerStyle = computed(() => {
 <template>
   <div
     :class="[
-      'cover-container relative overflow-hidden bg-black/[0.03] dark:bg-white/[0.03] flex items-center justify-center transition-all duration-300',
+      'cover-container relative overflow-hidden bg-black/[0.03] dark:bg-white/[0.03] flex items-center justify-center transition-colors duration-200',
       showShadow ? 'shadow-xl shadow-black/20' : '',
       props.class,
     ]"
@@ -68,7 +68,7 @@ const containerStyle = computed(() => {
     <!-- 1. 加载中占位 -->
     <div
       v-if="status === 'loading'"
-      class="absolute inset-0 flex items-center justify-center animate-pulse"
+      class="absolute inset-0 flex items-center justify-center bg-black/[0.02] dark:bg-white/[0.02]"
     >
       <Icon :icon="iconMusic" width="40%" height="40%" class="opacity-10" />
     </div>
@@ -78,11 +78,13 @@ const containerStyle = computed(() => {
       v-if="url || processedUrl"
       :src="processedUrl"
       :alt="alt"
+      loading="lazy"
+      decoding="async"
       @load="handleLoad"
       @error="handleError"
       :class="[
-        'w-full h-full object-cover transition-all duration-700',
-        status === 'success' ? 'opacity-100 scale-100' : 'opacity-0 scale-105',
+        'w-full h-full object-cover transition-opacity duration-200',
+        status === 'success' ? 'opacity-100' : 'opacity-0',
       ]"
     />
 

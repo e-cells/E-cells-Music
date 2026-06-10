@@ -557,6 +557,7 @@ const playAllMvResults = async () => {
       hash: firstMv.hash,
       playlist: JSON.stringify(playlist),
       startIndex: 0,
+      screenOrientation: settingStore.screenOrientation,
     });
   } catch {
     searchToastStore.loadFailed('MV');

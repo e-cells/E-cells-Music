@@ -10,6 +10,7 @@ import type { VideoSource } from '@/models/video';
 import { usePlayerStore } from '@/stores/player';
 import { useToastStore } from '@/stores/toast';
 import { useMvPlaylistStore } from '@/stores/mvPlaylist';
+import { useSettingStore } from '@/stores/setting';
 import { isGeckoView, NativeMvPlayerBridge } from '@/utils/nativeBridge';
 import router from '@/router';
 
@@ -164,14 +165,8 @@ export async function launchMv(options: LaunchMvOptions): Promise<void> {
       hash: bestHash,
       sourceHashes,
       autoFullscreen: isLandscape ? 'true' : 'false',
+      screenOrientation: useSettingStore().screenOrientation,
     });
-
-    toastStore.remove(loadingToastId);
-  } catch {
-    if (gen !== launchGeneration) return;
-    toastStore.loadFailed('MV');
-  }
-}
 
 export interface MvPlaylistItem {
   hash: string;
@@ -294,6 +289,7 @@ export async function launchMvWithPlaylist(options: {
       startIndex,
       sourceHashes,
       autoFullscreen: isLandscape ? 'true' : 'false',
+      screenOrientation: useSettingStore().screenOrientation,
     });
 
     toastStore.remove(loadingToastId);

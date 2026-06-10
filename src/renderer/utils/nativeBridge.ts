@@ -195,6 +195,7 @@ export const NativeMvPlayerBridge = {
     startIndex?: number;
     sourceHashes?: string;   // "hash1|label1,hash2|label2,..." 供原生画质选择/自动换源
     autoFullscreen?: string; // "true" | "false" 横屏时自动全屏
+    screenOrientation?: string; // "auto" | "portrait" | "landscape" 屏幕方向设置
   }) => nativeCall('openMvPlayer', options),
   loadMvVideo: (options: {
     url: string;

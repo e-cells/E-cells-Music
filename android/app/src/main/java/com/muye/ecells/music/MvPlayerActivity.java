@@ -61,6 +61,7 @@ public class MvPlayerActivity extends AppCompatActivity {
     public static final String EXTRA_START_INDEX = "startIndex";
     public static final String EXTRA_SOURCE_HASHES = "sourceHashes";
     public static final String EXTRA_AUTO_FULLSCREEN = "autoFullscreen";
+    public static final String EXTRA_SCREEN_ORIENTATION = "screenOrientation";
 
     private static final int HIDE_CONTROLS_DELAY_MS = 3000;
     private static final int PROGRESS_UPDATE_INTERVAL_MS = 500;
@@ -121,6 +122,8 @@ public class MvPlayerActivity extends AppCompatActivity {
     private String[] sourceLabels;
     private int currentSourceIndex = 0;
     private boolean autoFullscreen = false;
+    // 屏幕方向设置："auto" / "portrait" / "landscape"
+    private String screenOrientation = "auto";
     private boolean isSwitchingQuality = false;
 
     @Override
@@ -165,6 +168,10 @@ public class MvPlayerActivity extends AppCompatActivity {
 
         // 解析自动全屏标记
         autoFullscreen = "true".equals(getIntent().getStringExtra(EXTRA_AUTO_FULLSCREEN));
+        String orientationStr = getIntent().getStringExtra(EXTRA_SCREEN_ORIENTATION);
+        if (orientationStr != null && !orientationStr.isEmpty()) {
+            screenOrientation = orientationStr;
+        }
 
         if (savedInstanceState != null) {
             savedPosition = savedInstanceState.getLong("savedPosition", savedPosition);
@@ -795,17 +802,64 @@ public class MvPlayerActivity extends AppCompatActivity {
             );
             params.weight = 0;
             videoContainer.setLayoutParams(params);
-            enterImmersiveMode();
             btnFullscreen.setImageResource(R.drawable.ic_fullscreen_exit);
 
-            // 监听 WindowInsets，让 PlayerView 避开导航栏和状态栏
-            ViewCompat.setOnApplyWindowInsetsListener(videoContainer, (v, insets) -> {
-                int navBarHeight = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom;
-                int statusBarHeight = insets.getInsets(WindowInsetsCompat.Type.systemBars()).top;
-                // 设置 PlayerView 的 padding，使视频内容等比缩放到系统栏内侧
-                playerView.setPadding(0, statusBarHeight, 0, navBarHeight);
-                return insets;
-            });
+            if ("landscape".equals(screenOrientation)) {
+                // 横屏锁定模式：保持系统栏可见，视频缩放到系统栏之间
+                exitImmersiveMode();
+
+                ViewCompat.setOnApplyWindowInsetsListener(videoContainer, (v, insets) -> {
+                    int navBarHeight = insets.getInsets(WindowInsetsCompat.Type.systemBars()).bottom;
+                    int statusBarHeight = insets.getInsets(WindowInsetsCompat.Type.systemBars()).top;
+
+                    // 兼容刘海屏等异形屏的安全边距
+                    int safeLeft = 0;
+                    int safeRight = 0;
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && insets.getDisplayCutout() != null) {
+                        safeLeft = insets.getDisplayCutout().getSafeInsetLeft();
+                        safeRight = insets.getDisplayCutout().getSafeInsetRight();
+                    }
+
+                    // 给 PlayerView 设置 Margin，视频不延申到状态栏和导航栏
+                    FrameLayout.LayoutParams playerLp = (FrameLayout.LayoutParams) playerView.getLayoutParams();
+                    playerLp.setMargins(safeLeft, statusBarHeight, safeRight, navBarHeight);
+                    playerView.setLayoutParams(playerLp);
+
+                    // 给控制层也设置 Margin
+                    if (controlsRoot != null) {
+                        FrameLayout.LayoutParams controlsLp = (FrameLayout.LayoutParams) controlsRoot.getLayoutParams();
+                        controlsLp.setMargins(safeLeft, statusBarHeight, safeRight, navBarHeight);
+                        controlsRoot.setLayoutParams(controlsLp);
+                    }
+
+                    return insets;
+                });
+            } else {
+                // 竖屏锁定 / 自动旋转模式：真正沉浸式全屏，隐藏状态栏和导航栏
+                enterImmersiveMode();
+
+                // 沉浸模式下视频铺满全屏，仅处理刘海屏安全边距
+                ViewCompat.setOnApplyWindowInsetsListener(videoContainer, (v, insets) -> {
+                    int safeLeft = 0;
+                    int safeRight = 0;
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && insets.getDisplayCutout() != null) {
+                        safeLeft = insets.getDisplayCutout().getSafeInsetLeft();
+                        safeRight = insets.getDisplayCutout().getSafeInsetRight();
+                    }
+
+                    FrameLayout.LayoutParams playerLp = (FrameLayout.LayoutParams) playerView.getLayoutParams();
+                    playerLp.setMargins(safeLeft, 0, safeRight, 0);
+                    playerView.setLayoutParams(playerLp);
+
+                    if (controlsRoot != null) {
+                        FrameLayout.LayoutParams controlsLp = (FrameLayout.LayoutParams) controlsRoot.getLayoutParams();
+                        controlsLp.setMargins(safeLeft, 0, safeRight, 0);
+                        controlsRoot.setLayoutParams(controlsLp);
+                    }
+
+                    return insets;
+                });
+            }
         } else {
             // 竖屏：视频 + 信息区
             bottomContainer.setVisibility(View.VISIBLE);
@@ -818,22 +872,32 @@ public class MvPlayerActivity extends AppCompatActivity {
             exitImmersiveMode();
             btnFullscreen.setImageResource(R.drawable.ic_fullscreen);
 
-            // 竖屏不需要 padding
-            playerView.setPadding(0, 0, 0, 0);
+            // 竖屏切回时，清空之前设置的 Margin，恢复原本布局
+            FrameLayout.LayoutParams playerLp = (FrameLayout.LayoutParams) playerView.getLayoutParams();
+            playerLp.setMargins(0, 0, 0, 0);
+            playerView.setLayoutParams(playerLp);
+
+            if (controlsRoot != null) {
+                FrameLayout.LayoutParams controlsLp = (FrameLayout.LayoutParams) controlsRoot.getLayoutParams();
+                controlsLp.setMargins(0, 0, 0, 0);
+                controlsRoot.setLayoutParams(controlsLp);
+            }
+
             ViewCompat.setOnApplyWindowInsetsListener(videoContainer, null);
         }
     }
 
     private void enterImmersiveMode() {
-        // 横屏时保持系统状态栏和导航栏可见（与APP其它页面一致）
-        // 不隐藏系统栏，仅确保窗口正确适配
+        // 隐藏状态栏和导航栏，真正沉浸式全屏
         WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
         if (controller != null) {
-            controller.show(WindowInsetsCompat.Type.systemBars());
+            controller.hide(WindowInsetsCompat.Type.systemBars());
+            controller.setSystemBarsBehavior(WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
         }
     }
 
     private void exitImmersiveMode() {
+        // 显示状态栏和导航栏
         WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
         if (controller != null) {
             controller.show(WindowInsetsCompat.Type.systemBars());

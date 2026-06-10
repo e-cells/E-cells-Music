@@ -195,6 +195,7 @@ const handlePlayClick = async () => {
         author: authorLine.value,
         coverUrl: cover.value,
         hash,
+        screenOrientation: settingStore.screenOrientation,
       });
     } catch {
       if (gen !== loadVideoGeneration) return;

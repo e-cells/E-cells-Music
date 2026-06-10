@@ -408,6 +408,7 @@ const handlePlayAllMvs = async () => {
       hash: firstMv.hash,
       playlist: JSON.stringify(playlist),
       startIndex: 0,
+      screenOrientation: settingStore.screenOrientation,
     });
   } catch {
     toastStore.loadFailed('MV');

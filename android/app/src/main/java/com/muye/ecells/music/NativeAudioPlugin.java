@@ -2224,6 +2224,11 @@ public class NativeAudioPlugin {
         if (autoFullscreen != null) {
             intent.putExtra(MvPlayerActivity.EXTRA_AUTO_FULLSCREEN, autoFullscreen);
         }
+        // 屏幕方向设置，用于决定横屏时是否真正沉浸式
+        String screenOrientation = params.get("screenOrientation");
+        if (screenOrientation != null && !screenOrientation.isEmpty()) {
+            intent.putExtra(MvPlayerActivity.EXTRA_SCREEN_ORIENTATION, screenOrientation);
+        }
         a.startActivity(intent);
         return "{\"opened\":true}";
     }

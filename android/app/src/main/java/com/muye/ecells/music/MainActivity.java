@@ -28,6 +28,7 @@ import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.splashscreen.SplashScreen;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.view.WindowCompat;
@@ -56,6 +57,7 @@ public class MainActivity extends AppCompatActivity {
     private AssetServer assetServer;
     private String pendingVoiceSearchQuery = null;
     private int lastNightMode = -1;
+    private volatile boolean isPageReady = false;
 
     // === 主题跟随模式：默认跟随系统 ===
     private String themeAutoMode = "system"; // 可选值: "system" 或 "sensor"
@@ -110,6 +112,8 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        SplashScreen splashScreen = SplashScreen.installSplashScreen(this);
+        splashScreen.setKeepOnScreenCondition(() -> !isPageReady);
         super.onCreate(savedInstanceState);
 
         // FLAG_KEEP_SCREEN_ON 已移除，通过 native://setKeepScreenOn bridge 按需开启
@@ -134,12 +138,6 @@ public class MainActivity extends AppCompatActivity {
                 registerLightSensorIfNeeded();
             }
 
-            assetServer = new AssetServer(this);
-            assetServer.startServer();
-
-            AudioCacheManager.initialize(this);
-            ApkUpdateManager.initialize(this);
-
             setContentView(R.layout.activity_main);
             geckoView = findViewById(R.id.geckoView);
 
@@ -156,132 +154,159 @@ public class MainActivity extends AppCompatActivity {
                 }
             });
 
-            if (runtime == null) {
-                org.mozilla.geckoview.ContentBlocking.Settings cbSettings =
-                    new org.mozilla.geckoview.ContentBlocking.Settings.Builder()
-                        .antiTracking(org.mozilla.geckoview.ContentBlocking.AntiTracking.NONE)
-                        .strictSocialTrackingProtection(false)
-                        .build();
-                runtime = GeckoRuntime.create(this,
-                    new GeckoRuntimeSettings.Builder()
-                        .contentBlocking(cbSettings)
-                        .build()
-                );
-            }
-
-            session = new GeckoSession();
-            session.getSettings().setUserAgentMode(GeckoSessionSettings.USER_AGENT_MODE_MOBILE);
-            session.getSettings().setViewportMode(GeckoSessionSettings.VIEWPORT_MODE_MOBILE);
-            session.getSettings().setAllowJavascript(true);
-
-            audioPlugin = new NativeAudioPlugin(this, session);
-            audioPlugin.setVideoTextureView(nativeVideoSurface);
-            ApkUpdateManager.getInstance().setPlugin(audioPlugin);
-            ApkUpdateManager.getInstance().cleanupOldApks();
-
-            session.setNavigationDelegate(new GeckoSession.NavigationDelegate() {
-                @Override
-                public GeckoResult<AllowOrDeny> onLoadRequest(GeckoSession navSession, GeckoSession.NavigationDelegate.LoadRequest request) {
-                    if (request.uri.startsWith("native://")) {
-                        // === 拦截前端传来的设置更改 ===
-                        if (request.uri.startsWith("native://setThemeAutoMode")) {
-                            String mode = request.uri.substring(request.uri.indexOf("mode=") + 5);
-                            setThemeAutoMode(mode);
-                            return GeckoResult.deny();
-                        }
-                        audioPlugin.handleUri(request.uri);
-                        return GeckoResult.deny();
-                    }
-                    return GeckoResult.allow();
-                }
-            });
-
-            session.setPromptDelegate(new GeckoSession.PromptDelegate() {
-                @Override
-                public GeckoResult<PromptResponse> onTextPrompt(GeckoSession promptSession, TextPrompt prompt) {
-                    String uri = prompt.defaultValue;
-                    if (uri != null && uri.startsWith("native://")) {
-                        // === 拦截前端传来的设置更改 (通过 prompt 方式) ===
-                        if (uri.startsWith("native://setThemeAutoMode")) {
-                            String mode = uri.substring(uri.indexOf("mode=") + 5);
-                            setThemeAutoMode(mode);
-                            return GeckoResult.fromValue(prompt.confirm("ok"));
-                        }
-                        String result = audioPlugin.handleUriSync(uri);
-                        return GeckoResult.fromValue(prompt.confirm(result));
-                    }
-                    return GeckoResult.fromValue(prompt.dismiss());
-                }
-            });
-
-            session.setProgressDelegate(new GeckoSession.ProgressDelegate() {
-                @Override
-                public void onPageStart(GeckoSession progSession, String url) {
-                    // === 页面开始加载时，从 SharedPreferences 恢复 store 数据到 localStorage ===
-                    // 此时 JS 还未执行，localStorage 写入会在 Pinia rehydrate 之前生效
-                    try {
-                        android.content.SharedPreferences sp = getSharedPreferences("pinia_stores", Context.MODE_PRIVATE);
-                        java.util.Map<String, ?> all = sp.getAll();
-                        if (!all.isEmpty()) {
-                            StringBuilder sb = new StringBuilder("try{");
-                            for (java.util.Map.Entry<String, ?> entry : all.entrySet()) {
-                                String key = entry.getKey();
-                                String val = String.valueOf(entry.getValue());
-                                String quotedVal = JSONObject.quote(val);
-                                String quotedKey = JSONObject.quote(key);
-                                sb.append("localStorage.setItem(").append(quotedKey).append(",").append(quotedVal).append(");");
-                            }
-                            sb.append("}catch(e){}");
-                            evalJs(sb.toString());
-                        }
-                    } catch (Exception e) {
-                        Log.w("MainActivity", "Failed to restore SharedPreferences to localStorage", e);
-                    }
-                    // 提前启用原生持久化桥，防止 onPageStop success=false 时桥未启用导致设置丢失
-                    evalJs("window.__persistToNativeReady=true;");
-                }
-
-                @Override
-                public void onPageStop(GeckoSession progSession, boolean success) {
-                    if (success) {
-                        evalJs("window.__GECKOVIEW__=true;window.__persistToNativeReady=true;window.NativeBridge=window.NativeBridge||{_callbacks:{},_listeners:{}};");
-                        evalJs("if(window.__pendingVoiceSearch&&window.NativeBridge._listeners['mediaButtonPlayFromSearch']){" +
-                            "var q=window.__pendingVoiceSearch;delete window.__pendingVoiceSearch;" +
-                            "window.NativeBridge._listeners['mediaButtonPlayFromSearch'].forEach(function(cb){cb(q);});}");
-                        evalJs("try{var s=JSON.parse(localStorage.getItem('setting'));if(s&&s.screenOrientation)" +
-                            "{window.prompt('__native__','native://setOrientation?orientation='+s.screenOrientation);}}catch(e){}");
-                        evalJs("window.__STATUS_BAR_HEIGHT__=" + getStatusBarHeight() + ";");
-                        
-                        // === 页面加载完成时，读取前端保存的主题设置 ===
-                        evalJs("try{var s=JSON.parse(localStorage.getItem('setting'));if(s&&s.theme){" +
-                            "var m=(s.theme==='sensor')?'sensor':'system';" +
-                            "window.prompt('__native__','native://setThemeAutoMode?mode='+m);}}catch(e){}");
-                        
-                    }
-                }
-            });
-
-            session.open(runtime);
-            geckoView.setSession(session);
-
-            String url = assetServer.getBaseUrl() + "index.html";
-            session.loadUri(url);
-
+            // 不依赖 GeckoView 的操作，立即在主线程执行
             handleVoiceSearchIntent(getIntent());
             createNotificationChannels();
             requestNotificationPermission();
 
-            MediaNotificationService.setPendingActivity(this);
-            Intent serviceIntent = new Intent(this, MediaNotificationService.class);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(serviceIntent);
-            } else {
-                startService(serviceIntent);
-            }
+            // IO 密集型操作移到后台线程，完成后在 UI 线程初始化 GeckoView
+            new Thread(() -> {
+                try {
+                    assetServer = new AssetServer(MainActivity.this);
+                    assetServer.startServer();
+
+                    AudioCacheManager.initialize(MainActivity.this);
+                    ApkUpdateManager.initialize(MainActivity.this);
+
+                    // 回到 UI 线程完成 GeckoView 初始化
+                    runOnUiThread(() -> {
+                        try {
+                            initGeckoView(nativeVideoSurface);
+                        } catch (Exception e) {
+                            showErrorScreen("视图初始化失败: " + e.getMessage());
+                        }
+                    });
+                } catch (Exception e) {
+                    runOnUiThread(() -> showErrorScreen("初始化失败: " + e.getMessage()));
+                }
+            }).start();
 
         } catch (Exception e) {
             showErrorScreen("初始化失败: " + e.getMessage());
         }
+    }
+
+    private void initGeckoView(TextureView nativeVideoSurface) {
+        if (runtime == null) {
+            org.mozilla.geckoview.ContentBlocking.Settings cbSettings =
+                new org.mozilla.geckoview.ContentBlocking.Settings.Builder()
+                    .antiTracking(org.mozilla.geckoview.ContentBlocking.AntiTracking.NONE)
+                    .strictSocialTrackingProtection(false)
+                    .build();
+            runtime = GeckoRuntime.create(this,
+                new GeckoRuntimeSettings.Builder()
+                    .contentBlocking(cbSettings)
+                    .build()
+            );
+        }
+
+        session = new GeckoSession();
+        session.getSettings().setUserAgentMode(GeckoSessionSettings.USER_AGENT_MODE_MOBILE);
+        session.getSettings().setViewportMode(GeckoSessionSettings.VIEWPORT_MODE_MOBILE);
+        session.getSettings().setAllowJavascript(true);
+
+        audioPlugin = new NativeAudioPlugin(this, session);
+        audioPlugin.setVideoTextureView(nativeVideoSurface);
+        ApkUpdateManager.getInstance().setPlugin(audioPlugin);
+        ApkUpdateManager.getInstance().cleanupOldApks();
+
+        session.setNavigationDelegate(new GeckoSession.NavigationDelegate() {
+            @Override
+            public GeckoResult<AllowOrDeny> onLoadRequest(GeckoSession navSession, GeckoSession.NavigationDelegate.LoadRequest request) {
+                if (request.uri.startsWith("native://")) {
+                    // === 拦截前端传来的设置更改 ===
+                    if (request.uri.startsWith("native://setThemeAutoMode")) {
+                        String mode = request.uri.substring(request.uri.indexOf("mode=") + 5);
+                        setThemeAutoMode(mode);
+                        return GeckoResult.deny();
+                    }
+                    audioPlugin.handleUri(request.uri);
+                    return GeckoResult.deny();
+                }
+                return GeckoResult.allow();
+            }
+        });
+
+        session.setPromptDelegate(new GeckoSession.PromptDelegate() {
+            @Override
+            public GeckoResult<PromptResponse> onTextPrompt(GeckoSession promptSession, TextPrompt prompt) {
+                String uri = prompt.defaultValue;
+                if (uri != null && uri.startsWith("native://")) {
+                    // === 拦截前端传来的设置更改 (通过 prompt 方式) ===
+                    if (uri.startsWith("native://setThemeAutoMode")) {
+                        String mode = uri.substring(uri.indexOf("mode=") + 5);
+                        setThemeAutoMode(mode);
+                        return GeckoResult.fromValue(prompt.confirm("ok"));
+                    }
+                    String result = audioPlugin.handleUriSync(uri);
+                    return GeckoResult.fromValue(prompt.confirm(result));
+                }
+                return GeckoResult.fromValue(prompt.dismiss());
+            }
+        });
+
+        session.setProgressDelegate(new GeckoSession.ProgressDelegate() {
+            @Override
+            public void onPageStart(GeckoSession progSession, String url) {
+                // 页面开始加载即可关闭原生 SplashScreen，让 Loading.vue 动画尽快显示
+                isPageReady = true;
+                // === 页面开始加载时，从 SharedPreferences 恢复 store 数据到 localStorage ===
+                // 此时 JS 还未执行，localStorage 写入会在 Pinia rehydrate 之前生效
+                try {
+                    android.content.SharedPreferences sp = getSharedPreferences("pinia_stores", Context.MODE_PRIVATE);
+                    java.util.Map<String, ?> all = sp.getAll();
+                    if (!all.isEmpty()) {
+                        StringBuilder sb = new StringBuilder("try{");
+                        for (java.util.Map.Entry<String, ?> entry : all.entrySet()) {
+                            String key = entry.getKey();
+                            String val = String.valueOf(entry.getValue());
+                            String quotedVal = JSONObject.quote(val);
+                            String quotedKey = JSONObject.quote(key);
+                            sb.append("localStorage.setItem(").append(quotedKey).append(",").append(quotedVal).append(");");
+                        }
+                        sb.append("}catch(e){}");
+                        evalJs(sb.toString());
+                    }
+                } catch (Exception e) {
+                    Log.w("MainActivity", "Failed to restore SharedPreferences to localStorage", e);
+                }
+                // 提前启用原生持久化桥，防止 onPageStop success=false 时桥未启用导致设置丢失
+                evalJs("window.__persistToNativeReady=true;");
+            }
+
+            @Override
+            public void onPageStop(GeckoSession progSession, boolean success) {
+                if (success) {
+                    evalJs("window.__GECKOVIEW__=true;window.__persistToNativeReady=true;window.NativeBridge=window.NativeBridge||{_callbacks:{},_listeners:{}};");
+                    evalJs("if(window.__pendingVoiceSearch&&window.NativeBridge._listeners['mediaButtonPlayFromSearch']){" +
+                        "var q=window.__pendingVoiceSearch;delete window.__pendingVoiceSearch;" +
+                        "window.NativeBridge._listeners['mediaButtonPlayFromSearch'].forEach(function(cb){cb(q);});}");
+                    evalJs("try{var s=JSON.parse(localStorage.getItem('setting'));if(s&&s.screenOrientation)" +
+                        "{window.prompt('__native__','native://setOrientation?orientation='+s.screenOrientation);}}catch(e){}");
+                    evalJs("window.__STATUS_BAR_HEIGHT__=" + getStatusBarHeight() + ";");
+
+                    // === 页面加载完成时，读取前端保存的主题设置 ===
+                    evalJs("try{var s=JSON.parse(localStorage.getItem('setting'));if(s&&s.theme){" +
+                        "var m=(s.theme==='sensor')?'sensor':'system';" +
+                        "window.prompt('__native__','native://setThemeAutoMode?mode='+m);}}catch(e){}");
+
+                    // === 页面加载完成后再启动 MediaNotificationService ===
+                    MediaNotificationService.setPendingActivity(MainActivity.this);
+                    Intent serviceIntent = new Intent(MainActivity.this, MediaNotificationService.class);
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        startForegroundService(serviceIntent);
+                    } else {
+                        startService(serviceIntent);
+                    }
+                }
+            }
+        });
+
+        session.open(runtime);
+        geckoView.setSession(session);
+
+        String url = assetServer.getBaseUrl() + "index.html";
+        session.loadUri(url);
     }
 
     public void setKeepScreenOn(boolean keepOn) {

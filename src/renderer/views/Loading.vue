@@ -101,13 +101,12 @@ const completeStartup = async () => {
     logger.info('Loading', 'Online mode - skipping MPV check (browser audio)');
   }
 
-  await maybeAutoReceiveVip();
+  // VIP 领取不阻塞启动，后台执行
+  maybeAutoReceiveVip();
 
   // 成功后的最终提示，呼应诗句
   statusMessage.value = '一蓑烟雨任平生...';
-  window.setTimeout(() => {
-    navigateToHome();
-  }, 1200); // 稍微延长一点时间，让用户品味一下意境
+  navigateToHome();
 };
 
 const applyStatus = async (status: ApiServerStatus) => {

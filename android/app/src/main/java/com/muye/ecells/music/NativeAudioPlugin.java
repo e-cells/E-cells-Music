@@ -312,6 +312,7 @@ public class NativeAudioPlugin {
                 case "loadLyrics": return onLoadLyricsSync(params);
                 case "setPlaybackState": return onSetPlaybackStateSync(params);
                 case "lyricSeekTo": return onLyricSeekToSync(params);
+                case "lyricCalibrate": return onLyricCalibrateSync(params);
                 case "setKeepScreenOn": return onSetKeepScreenOnSync(params);
                 // Audio effects
                 case "setEqualizer": return onSetEqualizerSync(params);
@@ -707,7 +708,8 @@ public class NativeAudioPlugin {
             int wp = params.containsKey("widthPercent") ? Integer.parseInt(params.get("widthPercent")) : -1;
             boolean se = params.containsKey("strokeEnabled") && "true".equals(params.get("strokeEnabled"));
             String al = params.get("alignment");
-            service.applySettings(lci, dci, tm, fs, dl, lk, wp, se, al);
+            long lom = params.containsKey("lyricOffsetMs") ? Long.parseLong(params.get("lyricOffsetMs")) : Long.MIN_VALUE;
+            service.applySettings(lci, dci, tm, fs, dl, lk, wp, se, al, lom);
         }
         return "{}";
     }
@@ -982,6 +984,17 @@ public class NativeAudioPlugin {
         LyricOverlayService service = LyricOverlayService.getInstance();
         if (service != null) {
             service.seekTo(timeMs);
+        }
+        return "{}";
+    }
+
+    private String onLyricCalibrateSync(Map<String, String> params) {
+        long currentTimeMs = 0;
+        try { currentTimeMs = Long.parseLong(params.getOrDefault("currentTimeMs", "0")); } catch (NumberFormatException ignored) {}
+
+        LyricOverlayService service = LyricOverlayService.getInstance();
+        if (service != null) {
+            service.calibratePosition(currentTimeMs);
         }
         return "{}";
     }
@@ -1492,7 +1505,9 @@ public class NativeAudioPlugin {
                         boolean strokeEnabled = params.containsKey("strokeEnabled")
                             && "true".equals(params.get("strokeEnabled"));
                         String alignment = params.get("alignment");
-                        service.applySettings(lightColorIndex, darkColorIndex, themeMode, fontSize, doubleLine, locked, widthPercent, strokeEnabled, alignment);
+                        long lyricOffsetMs = params.containsKey("lyricOffsetMs")
+                            ? Long.parseLong(params.get("lyricOffsetMs")) : Long.MIN_VALUE;
+                        service.applySettings(lightColorIndex, darkColorIndex, themeMode, fontSize, doubleLine, locked, widthPercent, strokeEnabled, alignment, lyricOffsetMs);
                     }
                     resolveCallback(callbackId, "{}");
                     break;
@@ -1591,8 +1606,10 @@ public class NativeAudioPlugin {
         boolean strokeEnabled = params.containsKey("strokeEnabled")
             && "true".equals(params.get("strokeEnabled"));
         String alignment = params.get("alignment");
+        long lyricOffsetMs = params.containsKey("lyricOffsetMs")
+            ? Long.parseLong(params.get("lyricOffsetMs")) : Long.MIN_VALUE;
 
-        service.applySettings(lightColorIndex, darkColorIndex, themeMode, fontSize, doubleLine, locked, widthPercent, strokeEnabled, alignment);
+        service.applySettings(lightColorIndex, darkColorIndex, themeMode, fontSize, doubleLine, locked, widthPercent, strokeEnabled, alignment, lyricOffsetMs);
         resolveCallback(callbackId, "{}");
     }
 

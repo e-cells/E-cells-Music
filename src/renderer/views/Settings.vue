@@ -58,6 +58,7 @@ const androidLyricWidthPercent = ref(100);
 const androidLyricStrokeEnabled = ref(false);
 const androidLyricAlignment = ref('center');
 const androidLyricLocked = ref(false);
+const androidLyricOffsetMs = ref(0);
 let androidLyricPollTimer = 0;
 
 const ANDROID_LYRIC_PREFIX = 'android_lyric_';
@@ -80,6 +81,7 @@ const saveAndroidLyricState = () => {
     );
     localStorage.setItem(`${ANDROID_LYRIC_PREFIX}alignment`, androidLyricAlignment.value);
     localStorage.setItem(`${ANDROID_LYRIC_PREFIX}locked`, String(androidLyricLocked.value));
+    localStorage.setItem(`${ANDROID_LYRIC_PREFIX}lyricOffsetMs`, String(androidLyricOffsetMs.value));
   } catch {}
 };
 
@@ -107,6 +109,8 @@ const restoreAndroidLyricState = async () => {
         androidLyricStrokeEnabled.value = nativeSettings.strokeEnabled;
       if (typeof nativeSettings.alignment === 'string')
         androidLyricAlignment.value = nativeSettings.alignment;
+      if (typeof nativeSettings.lyricOffsetMs === 'number')
+        androidLyricOffsetMs.value = nativeSettings.lyricOffsetMs;
       if (typeof nativeSettings.enabled === 'boolean')
         androidLyricEnabled.value = nativeSettings.enabled;
     } else {
@@ -131,6 +135,8 @@ const restoreAndroidLyricState = async () => {
       if (savedStrokeEnabled) androidLyricStrokeEnabled.value = savedStrokeEnabled === 'true';
       if (savedAlignment) androidLyricAlignment.value = savedAlignment;
       if (savedLocked) androidLyricLocked.value = savedLocked === 'true';
+      const savedOffsetMs = localStorage.getItem(`${ANDROID_LYRIC_PREFIX}lyricOffsetMs`);
+      if (savedOffsetMs) androidLyricOffsetMs.value = Number(savedOffsetMs);
     }
 
     if (!androidLyricEnabled.value) {
@@ -233,6 +239,7 @@ const handleAndroidLyricSettingChange = () => {
     strokeEnabled: androidLyricStrokeEnabled.value,
     alignment: androidLyricAlignment.value,
     locked: androidLyricLocked.value,
+    lyricOffsetMs: androidLyricOffsetMs.value,
   });
 };
 
@@ -1139,6 +1146,29 @@ const handleShowChangelog = async () => {
             ]"
             @update:model-value="
               androidLyricAlignment = String($event);
+              handleAndroidLyricSettingChange();
+            "
+          />
+        </div>
+        <div class="settings-divider"></div>
+        <div class="settings-item">
+          <div class="space-y-1 flex-1 min-w-0 pr-2 sm:pr-4">
+            <h3 class="font-semibold text-[15px] sm:text-base truncate">歌词时间偏移</h3>
+            <p class="text-[13px] sm:text-sm text-text-secondary leading-relaxed">
+              调整歌词提前或延后显示（正值延后，负值提前）
+            </p>
+          </div>
+          <Slider
+            class="w-28 sm:w-48 flex-shrink-0"
+            :model-value="androidLyricOffsetMs"
+            :min="-1000"
+            :max="1000"
+            :step="50"
+            show-value
+            :value-suffix="'ms'"
+            @update:model-value="androidLyricOffsetMs = $event"
+            @value-commit="
+              androidLyricOffsetMs = $event;
               handleAndroidLyricSettingChange();
             "
           />

@@ -21,6 +21,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.util.Log;
@@ -121,10 +122,11 @@ public class LyricOverlayService extends Service {
     // Native lyric engine state
     private List<LyricLineData> lyrics = new ArrayList<>();
     private long basePlaybackMs = 0;
-    private long baseSystemMs = 0;
+    private long baseElapsedMs = 0; // 使用 SystemClock.elapsedRealtime() 单调时钟
     private boolean isPlaying = false;
     private int currentLineIndex = -1;
     private Runnable lyricTimerRunnable;
+    private long lyricOffsetMs = 0; // 用户可调歌词时间偏移
 
     // Screen on/off state
     private BroadcastReceiver screenReceiver;
@@ -153,6 +155,7 @@ public class LyricOverlayService extends Service {
         lyricWidthPercent = prefs.getInt("width_percent", 100);
         lyricStrokeEnabled = prefs.getBoolean("stroke_enabled", false);
         lyricAlignment = prefs.getString("alignment", "center");
+        lyricOffsetMs = prefs.getLong("lyric_offset_ms", 0L);
 
         createNotificationChannel();
         Notification notification = buildNotification();
@@ -376,7 +379,7 @@ public class LyricOverlayService extends Service {
     public void loadLyrics(List<LyricLineData> newLyrics, long currentTimeMs, boolean playing) {
         this.lyrics = newLyrics != null ? newLyrics : new ArrayList<>();
         this.basePlaybackMs = currentTimeMs;
-        this.baseSystemMs = System.currentTimeMillis();
+        this.baseElapsedMs = SystemClock.elapsedRealtime();
         this.isPlaying = playing;
         this.currentLineIndex = -1;
         startNativeLyricTimer();
@@ -394,7 +397,7 @@ public class LyricOverlayService extends Service {
 
     public void setPlaybackState(boolean playing, long currentTimeMs) {
         this.basePlaybackMs = currentTimeMs;
-        this.baseSystemMs = System.currentTimeMillis();
+        this.baseElapsedMs = SystemClock.elapsedRealtime();
         this.isPlaying = playing;
         if (playing) {
             startNativeLyricTimer();
@@ -405,20 +408,17 @@ public class LyricOverlayService extends Service {
 
     public void seekTo(long timeMs) {
         this.basePlaybackMs = timeMs;
-        this.baseSystemMs = System.currentTimeMillis();
+        this.baseElapsedMs = SystemClock.elapsedRealtime();
         this.currentLineIndex = -1;
-        handler.post(() -> {
-            if (isPlaying && !lyrics.isEmpty()) {
-                long pos = getCurrentPlaybackPosition();
-                currentLineIndex = findLineIndex(pos);
-                updateOverlayFromLyrics();
-            }
-        });
+        // 重启定时器：取消旧的（可能带长延迟），立即用新位置更新并重新计算调度延迟
+        if (isPlaying && !lyrics.isEmpty()) {
+            startNativeLyricTimer();
+        }
     }
 
     private long getCurrentPlaybackPosition() {
-        if (!isPlaying) return basePlaybackMs;
-        return basePlaybackMs + (System.currentTimeMillis() - baseSystemMs);
+        if (!isPlaying) return basePlaybackMs + lyricOffsetMs;
+        return basePlaybackMs + (SystemClock.elapsedRealtime() - baseElapsedMs) + lyricOffsetMs;
     }
 
     private int findLineIndex(long timeMs) {
@@ -469,12 +469,12 @@ public class LyricOverlayService extends Service {
     }
 
     /**
-     * Compute adaptive polling delay based on time until next lyric line.
-     * Long gaps between lines → longer delay (saves battery).
-     * Approaching a line change → shorter delay (accuracy).
-     *
-     * 双行模式下，关注下一个 pair 边界（pairStart + 2）而非下一行。
+     * 计算距下一句歌词的精确毫秒数，提前 RENDER_ADVANCE_MS 唤醒给 UI 渲染留时间。
+     * 替代原来的三级阶梯(1000/200/100ms)，改为精确计算延迟。
      */
+    private static final long RENDER_ADVANCE_MS = 40;
+    private static final long MIN_POLL_MS = 16;
+
     private long computeLyricPollDelay() {
         int nextIdx;
         if (doubleLine && currentLineIndex >= 0) {
@@ -488,13 +488,12 @@ public class LyricOverlayService extends Service {
         }
         long pos = getCurrentPlaybackPosition();
         long timeUntilNext = lyrics.get(nextIdx).timeMs - pos;
-        if (timeUntilNext > 2000) {
-            return 1000;
-        } else if (timeUntilNext > 500) {
-            return 200;
-        } else {
-            return 100;
+        if (timeUntilNext <= 0) {
+            return MIN_POLL_MS; // 已经过了这个时间点，立即重试
         }
+        // 提前 RENDER_ADVANCE_MS 唤醒，留给车机 CPU 准备 UI 渲染的时间
+        long delay = timeUntilNext - RENDER_ADVANCE_MS;
+        return Math.max(MIN_POLL_MS, delay);
     }
 
     private void stopNativeLyricTimer() {
@@ -559,7 +558,7 @@ public class LyricOverlayService extends Service {
 
     public void applySettings(int newLightColorIndex, int newDarkColorIndex, String newThemeMode,
             float newFontSize, boolean newDoubleLine, Boolean newLocked, int newWidthPercent,
-            boolean newStrokeEnabled, String newAlignment) {
+            boolean newStrokeEnabled, String newAlignment, long newLyricOffsetMs) {
         if (newLightColorIndex >= 0 && newLightColorIndex < LIGHT_COLOR_HEX.length) {
             lightColorIndex = newLightColorIndex;
             prefs.edit().putInt("light_color_index", lightColorIndex).apply();
@@ -603,6 +602,14 @@ public class LyricOverlayService extends Service {
         if (alignmentChanged) {
             lyricAlignment = newAlignment;
             prefs.edit().putString("alignment", lyricAlignment).apply();
+        }
+        // Long.MIN_VALUE 为哨兵值，表示 JS 端未传递此参数，不覆盖当前值
+        if (newLyricOffsetMs != Long.MIN_VALUE) {
+            final boolean offsetChanged = (newLyricOffsetMs != lyricOffsetMs);
+            if (offsetChanged) {
+                lyricOffsetMs = newLyricOffsetMs;
+                prefs.edit().putLong("lyric_offset_ms", lyricOffsetMs).apply();
+            }
         }
 
         handler.post(() -> {
@@ -914,10 +921,20 @@ public class LyricOverlayService extends Service {
             json.put("widthPercent", lyricWidthPercent);
             json.put("strokeEnabled", lyricStrokeEnabled);
             json.put("alignment", lyricAlignment);
+            json.put("lyricOffsetMs", lyricOffsetMs);
             json.put("enabled", isVisible);
             return json.toString();
         } catch (Exception e) {
             return "{}";
         }
+    }
+
+    /**
+     * 心跳校准：由 JS 端定期调用，用 JS 的精确时间重新锚定 Native 时间基准。
+     * 防止长时间播放时两端时钟漂移。
+     */
+    public void calibratePosition(long currentTimeMs) {
+        this.basePlaybackMs = currentTimeMs;
+        this.baseElapsedMs = SystemClock.elapsedRealtime();
     }
 }

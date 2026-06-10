@@ -87,6 +87,9 @@ export const initAndroidLyricSync = async () => {
       strokeEnabled: androidSettings.strokeEnabled,
       alignment: androidSettings.alignment,
       locked: androidSettings.locked,
+      // lyricOffsetMs 不在此发送：由 Native SharedPreferences 持久化，
+      // 避免从 GeckoView 不可靠的 localStorage 读取到旧值覆盖正确数据。
+      // 仅在用户通过 Settings.vue 主动修改时通过 handleAndroidLyricSettingChange() 发送。
     }).catch(() => {});
   };
 
@@ -236,6 +239,27 @@ export const initAndroidLyricSync = async () => {
   });
   stops.push(enableListener);
 
+  // 心跳校准：每 30 秒用 JS 端精确时间重新锚定 Native 时间基准，防止长播放时钟漂移
+  let heartbeatTimer: number | null = null;
+  stops.push(
+    watch([isPlaying], ([playing]) => {
+      if (playing) {
+        if (heartbeatTimer !== null) clearInterval(heartbeatTimer);
+        heartbeatTimer = window.setInterval(() => {
+          if (!desktopLyricStore.settings.enabled || !isPlaying.value) return;
+          NativeLyricBridge.calibrateLyric({
+            currentTimeMs: Math.round(currentTime.value * 1000),
+          }).catch(() => {});
+        }, 30_000);
+      } else {
+        if (heartbeatTimer !== null) {
+          clearInterval(heartbeatTimer);
+          heartbeatTimer = null;
+        }
+      }
+    }, { immediate: true }),
+  );
+
   // Auto-restore desktop lyric if it was enabled before app closed
   const savedEnabled = getAndroidSetting('enabled', 'false');
   if (savedEnabled === 'true') {
@@ -264,6 +288,7 @@ export const initAndroidLyricSync = async () => {
   return () => {
     resumeListener.remove();
     if (lockPollTimer) clearTimeout(lockPollTimer);
+    if (heartbeatTimer !== null) clearInterval(heartbeatTimer);
     darkObserver.disconnect();
     stops.forEach((stop) => stop());
   };

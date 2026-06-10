@@ -121,6 +121,7 @@ export const NativeLyricBridge = {
     widthPercent?: number;
     strokeEnabled?: boolean;
     alignment?: string;
+    lyricOffsetMs?: number;
   }) => lyricCall('updateSettings', options),
   setLyricTheme: (options: { themeMode: string }) => lyricCall('setThemeMode', options),
   getLyricSettings: () => nativeCall('getLyricSettings'),
@@ -133,6 +134,8 @@ export const NativeLyricBridge = {
   setPlaybackState: (options: { isPlaying: boolean; currentTimeMs: number }) =>
     nativeCall('setPlaybackState', options),
   seekTo: (options: { currentTimeMs: number }) => nativeCall('lyricSeekTo', options),
+  calibrateLyric: (options: { currentTimeMs: number }) =>
+    nativeCall('lyricCalibrate', options),
   addListener,
 };
 

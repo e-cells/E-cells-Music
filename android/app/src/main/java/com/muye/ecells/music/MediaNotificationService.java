@@ -567,14 +567,13 @@ public class MediaNotificationService extends MediaBrowserServiceCompat {
                     hasAudioFocus = true;
                     break;
                 case AudioManager.AUDIOFOCUS_LOSS:
+                    // 永久丢失焦点（其他音乐/视频 App 接管）→ 暂停
                     emitMediaButton("mediaButtonPause");
                     abandonAudioFocus();
                     break;
                 case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT:
-                    wasPlayingBeforeDuck = isPlaying;
-                    emitMediaButton("mediaButtonPause");
-                    break;
                 case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK:
+                    // 临时丢失焦点（通知声、提示音）→ 降低音量 30%
                     wasPlayingBeforeDuck = false;
                     emitMediaButton("mediaButtonDuck");
                     break;

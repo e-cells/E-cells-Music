@@ -840,7 +840,16 @@ const { pause: pauseSeekRaf, resume: resumeSeekRaf } = useRafFn(() => {
 });
 
 const syncSeekAnchor = () => {
-  seekBaseMs = Math.round((playerStore.currentTime || 0) * 1000);
+  const newBaseMs = Math.round((playerStore.currentTime || 0) * 1000);
+  // seek guard 活跃期间，只接受接近 seekTarget 的位置更新锚点
+  // 防止 MediaPlayer 异步 seek 完成前报告的旧位置重置 RAF 插值基准
+  if (playerStore.seekTargetTime !== null) {
+    const targetMs = Math.round(playerStore.seekTargetTime * 1000);
+    if (Math.abs(newBaseMs - targetMs) > 2000) {
+      return; // 离 seek 目标太远 → 跳过锚点更新
+    }
+  }
+  seekBaseMs = newBaseMs;
   seekAnchorTick = performance.now();
   playSeekMs = seekBaseMs;
 };

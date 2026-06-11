@@ -7,9 +7,6 @@ import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.view.View;
 import android.view.WindowManager;
-import android.media.AudioAttributes;
-import android.media.MediaPlayer;
-import android.media.PlaybackParams;
 import android.media.audiofx.Equalizer;
 import android.media.audiofx.BassBoost;
 import android.media.audiofx.Virtualizer;
@@ -17,6 +14,15 @@ import android.media.audiofx.PresetReverb;
 import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;
 import android.net.Uri;
+
+import androidx.media3.common.AudioAttributes;
+import androidx.media3.common.C;
+import androidx.media3.common.MediaItem;
+import androidx.media3.common.PlaybackException;
+import androidx.media3.common.PlaybackParameters;
+import androidx.media3.common.Player;
+import androidx.media3.exoplayer.DefaultLoadControl;
+import androidx.media3.exoplayer.ExoPlayer;
 import android.os.Build;
 import android.Manifest;
 import android.os.Handler;
@@ -45,7 +51,7 @@ public class NativeAudioPlugin {
 
     private final WeakReference<MainActivity> activityRef;
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private MediaPlayer mediaPlayer;
+    private ExoPlayer exoPlayer;
     private boolean isPrepared = false;
     private double playbackRate = 1.0;
     private Runnable timeUpdateRunnable;
@@ -57,6 +63,9 @@ public class NativeAudioPlugin {
     private String lastAppliedEffect = "none";
     private String lastAppliedEqGains = null;
     private Runnable pendingCacheDownload = null;
+    private int currentAudioSessionId = 0;
+    private boolean playWhenReady = false;
+    private String currentRemoteUrl = null;
 
     // 缓存所有 Pinia store 的最新数据，供 onPause 时直接同步写盘
     private final Map<String, String> storeCache = new HashMap<>();
@@ -83,6 +92,98 @@ public class NativeAudioPlugin {
         LyricOverlayService.setOnSettingsChangedListener((locked) -> {
             emitEvent("lyricLockChanged", "{\"locked\":" + locked + "}");
         });
+    }
+
+    // ── ExoPlayer 工厂方法 + 持久化 Listener ──
+
+    private final Player.Listener playerListener = new Player.Listener() {
+        @Override
+        public void onPlaybackStateChanged(int playbackState) {
+            if (playbackState == Player.STATE_READY) {
+                isPrepared = true;
+                long durationMs = exoPlayer != null ? exoPlayer.getDuration() : 0;
+                double duration = durationMs > 0 ? durationMs / 1000.0 : 0;
+                emitEvent("durationChange", "{\"duration\":" + duration + "}");
+                if (pendingSeekMs != null && exoPlayer != null) {
+                    exoPlayer.seekTo(pendingSeekMs);
+                    pendingSeekMs = null;
+                }
+                // Audio session ID 在 STATE_READY 后可用
+                if (exoPlayer != null) {
+                    int newSessionId = exoPlayer.getAudioSessionId();
+                    if (newSessionId != currentAudioSessionId && newSessionId != 0) {
+                        currentAudioSessionId = newSessionId;
+                        reapplyAudioEffects(newSessionId);
+                    }
+                }
+                if (playWhenReady && exoPlayer != null) {
+                    playWhenReady = false;
+                    exoPlayer.play();
+                    startTimeUpdates();
+                    emitEvent("play", "{}");
+                }
+            } else if (playbackState == Player.STATE_ENDED) {
+                stopTimeUpdates();
+                emitEvent("ended", "{}");
+            }
+        }
+
+        @Override
+        public void onPlayerError(PlaybackException error) {
+            stopTimeUpdates();
+            isPrepared = false;
+            if (playingFromCache && currentCacheKey != null && currentRemoteUrl != null) {
+                Log.w(TAG, "Cache playback failed, falling back to remote: " + currentCacheKey);
+                try { AudioCacheManager.getInstance().deleteCacheEntry(currentCacheKey); } catch (Exception ignored) {}
+                playingFromCache = false;
+                // 使用当前 ExoPlayer 实例直接切换到远程 URL
+                try {
+                    if (exoPlayer != null) {
+                        exoPlayer.setMediaItem(MediaItem.fromUri(currentRemoteUrl));
+                        exoPlayer.prepare();
+                        return;
+                    }
+                } catch (Exception e) {
+                    Log.e(TAG, "Cache fallback also failed", e);
+                }
+            }
+            String msg = error.getMessage();
+            if (msg == null) msg = error.getClass().getSimpleName();
+            int code = error.errorCode;
+            emitEvent("error", "{\"what\":" + code + ",\"extra\":0,\"message\":\"" + msg.replace("\"", "'") + "\"}");
+        }
+
+        @Override
+        public void onMediaItemTransition(MediaItem item, int reason) {
+            if (item != null && exoPlayer != null) {
+                int newSessionId = exoPlayer.getAudioSessionId();
+                if (newSessionId != currentAudioSessionId && newSessionId != 0) {
+                    currentAudioSessionId = newSessionId;
+                    reapplyAudioEffects(newSessionId);
+                }
+                // 通知前端 gapless 切歌发生
+                emitEvent("nextTrackStarted", "{}");
+            }
+        }
+    };
+
+    private ExoPlayer createExoPlayer() {
+        MainActivity a = getActivity();
+        ExoPlayer player = new ExoPlayer.Builder(a)
+            .setLoadControl(new DefaultLoadControl.Builder()
+                .setBufferDurationsMs(5000, 10000, 1000, 1000)
+                .build())
+            .build();
+        player.setAudioAttributes(
+            new AudioAttributes.Builder()
+                .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                .setUsage(C.USAGE_MEDIA)
+                .build(),
+            /* handleAudioFocus= */ false
+        );
+        player.setVolume(volumeValue);
+        player.addListener(playerListener);
+        return player;
     }
 
     /** 获取 Activity 引用，如果已被回收则返回 null */
@@ -142,6 +243,9 @@ public class NativeAudioPlugin {
                     break;
                 case "unload":
                     onUnload(callbackId);
+                    break;
+                case "addNextAudio":
+                    resolveCallback(callbackId, onAddNextAudioSync(params));
                     break;
                 case "updateMediaMetadata":
                     // Check if this is a lyric overlay command piggybacking on metadata channel
@@ -317,6 +421,8 @@ public class NativeAudioPlugin {
                 // Audio effects
                 case "setEqualizer": return onSetEqualizerSync(params);
                 case "setAudioEffect": return onSetAudioEffectSync(params);
+                // Gapless next-track pre-buffering
+                case "addNextAudio": return onAddNextAudioSync(params);
                 // APK update methods
                 case "getDeviceAbiInfo": return onGetDeviceAbiInfoSync();
                 case "downloadApk": return onDownloadApkSync(params);
@@ -360,6 +466,7 @@ public class NativeAudioPlugin {
         pendingSeekMs = null;
         currentCacheKey = null;
         playingFromCache = false;
+        currentRemoteUrl = url;
 
         String hash = params.get("hash");
         String quality = params.get("quality");
@@ -385,10 +492,9 @@ public class NativeAudioPlugin {
                 }
             }
 
-            // 启动恢复时跳过缓存下载，避免 switchToCachedSource 中断播放
+            // 启动恢复时跳过缓存下载，避免下载中断播放
             String suppressSwitch = params.get("suppressCacheSwitch");
             if (!playingFromCache && cacheKey != null && !"true".equals(suppressSwitch)) {
-                // 延迟 3 秒启动缓存下载，优先保证 MediaPlayer 缓冲，减少带宽竞争
                 final String downloadCacheKey = cacheKey;
                 final String downloadUrl = url;
                 final AudioCacheManager downloadCm = cacheManager;
@@ -403,8 +509,6 @@ public class NativeAudioPlugin {
                             @Override
                             public void onComplete(String key) {
                                 emitEvent("cacheProgress", "{\"cacheKey\":\"" + key + "\",\"percent\":1.0}");
-                                // 不在播放中途切换 MediaPlayer —— 缓存文件会在下次播放该歌曲时
-                                // 通过 isCached() 检查自动使用。中途切换会导致音频叠加/断裂。
                             }
                         });
                         Log.i(TAG, "Delayed cache download started: " + downloadCacheKey);
@@ -421,130 +525,34 @@ public class NativeAudioPlugin {
         }
 
         try {
-            mediaPlayer = new MediaPlayer();
-            mediaPlayer.setAudioAttributes(
-                new AudioAttributes.Builder()
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .build()
-            );
-            mediaPlayer.setOnPreparedListener(mp -> {
-                isPrepared = true;
-                double duration = mp.getDuration() / 1000.0;
-                emitEvent("durationChange", "{\"duration\":" + duration + "}");
-                if (pendingSeekMs != null) {
-                    mp.seekTo(pendingSeekMs);
-                    pendingSeekMs = null;
-                }
-            });
-            mediaPlayer.setOnCompletionListener(mp -> {
-                stopTimeUpdates();
-                if (isPrematureCompletion(mp)) {
-                    handlePrematureCompletion(mp);
-                    return;
-                }
-                emitEvent("ended", "{}");
-            });
-            mediaPlayer.setOnErrorListener((mp, what, extra) -> {
-                stopTimeUpdates();
-                // If playing from cache failed, try remote URL as fallback
-                if (playingFromCache && currentCacheKey != null) {
-                    Log.w(TAG, "Cache playback failed, falling back to remote: " + currentCacheKey);
-                    int fallbackPosition = 0;
-                    try { fallbackPosition = mp.getCurrentPosition(); } catch (Exception ignored) {}
-                    try {
-                        AudioCacheManager cm = AudioCacheManager.getInstance();
-                        cm.deleteCacheEntry(currentCacheKey);
-                    } catch (Exception ignored) {}
-                    playingFromCache = false;
-                    try {
-                        mp.release();
-                    } catch (Exception ignored) {}
-                    final int seekPosition = fallbackPosition;
-                    mediaPlayer = new MediaPlayer();
-                    mediaPlayer.setAudioAttributes(
-                        new AudioAttributes.Builder()
-                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                            .setUsage(AudioAttributes.USAGE_MEDIA)
-                            .build()
-                    );
-                    mediaPlayer.setOnPreparedListener(mp2 -> {
-                        isPrepared = true;
-                        double dur = mp2.getDuration() / 1000.0;
-                        emitEvent("durationChange", "{\"duration\":" + dur + "}");
-                        if (seekPosition > 0) {
-                            mp2.seekTo(seekPosition);
-                        } else if (pendingSeekMs != null) {
-                            mp2.seekTo(pendingSeekMs);
-                            pendingSeekMs = null;
-                        }
-                        mp2.start();
-                        startTimeUpdates();
-                        emitEvent("play", "{}");
-                    });
-                    mediaPlayer.setOnCompletionListener(mp2 -> {
-                        stopTimeUpdates();
-                        if (isPrematureCompletion(mp2)) {
-                            handlePrematureCompletion(mp2);
-                            return;
-                        }
-                        emitEvent("ended", "{}");
-                    });
-                    mediaPlayer.setOnErrorListener((mp2, w, ex) -> {
-                        stopTimeUpdates();
-                        emitEvent("error", "{\"what\":" + w + ",\"extra\":" + ex + "}");
-                        isPrepared = false;
-                        return true;
-                    });
-                    try {
-                        mediaPlayer.setDataSource(url);
-                        mediaPlayer.prepareAsync();
-                        return true;
-                    } catch (IOException e2) {
-                        emitEvent("error", "{\"what\":" + what + ",\"extra\":" + extra + "}");
-                        isPrepared = false;
-                        return true;
-                    }
-                }
-                emitEvent("error", "{\"what\":" + what + ",\"extra\":" + extra + "}");
-                isPrepared = false;
-                return true;
-            });
-            mediaPlayer.setOnSeekCompleteListener(mp -> {});
-            mediaPlayer.setDataSource(dataSource);
-            mediaPlayer.prepareAsync();
+            exoPlayer = createExoPlayer();
+            MediaItem mediaItem = new MediaItem.Builder()
+                .setUri(dataSource)
+                .build();
+            exoPlayer.setMediaItem(mediaItem);
+            exoPlayer.prepare();
             return "{\"loaded\":true,\"fromCache\":" + playingFromCache + "}";
-        } catch (IOException e) {
+        } catch (Exception e) {
             return "{\"__nativeError\":\"Failed to load audio: " + e.getMessage() + "\"}";
         }
     }
 
     private String onPlaySync() {
-        if (mediaPlayer == null) return "{\"__nativeError\":\"no audio loaded\"}";
+        if (exoPlayer == null) return "{\"__nativeError\":\"no audio loaded\"}";
         if (isPrepared) {
-            mediaPlayer.start();
+            exoPlayer.play();
             startTimeUpdates();
             emitEvent("play", "{}");
         } else {
-            mediaPlayer.setOnPreparedListener(mp -> {
-                isPrepared = true;
-                double duration = mp.getDuration() / 1000.0;
-                emitEvent("durationChange", "{\"duration\":" + duration + "}");
-                if (pendingSeekMs != null) {
-                    mp.seekTo(pendingSeekMs);
-                    pendingSeekMs = null;
-                }
-                mp.start();
-                startTimeUpdates();
-                emitEvent("play", "{}");
-            });
+            // 未准备好时标记 playWhenReady，Listener 的 STATE_READY 中自动触发播放
+            playWhenReady = true;
         }
         return "{}";
     }
 
     private String onPauseSync() {
-        if (mediaPlayer != null && mediaPlayer.isPlaying()) {
-            mediaPlayer.pause();
+        if (exoPlayer != null && exoPlayer.isPlaying()) {
+            exoPlayer.pause();
             stopTimeUpdates();
             emitEvent("pause", "{}");
         }
@@ -552,8 +560,8 @@ public class NativeAudioPlugin {
     }
 
     private String onStopSync() {
-        if (mediaPlayer != null && isPrepared) {
-            mediaPlayer.stop();
+        if (exoPlayer != null && isPrepared) {
+            exoPlayer.stop();
             isPrepared = false;
             stopTimeUpdates();
         }
@@ -564,9 +572,11 @@ public class NativeAudioPlugin {
         String timeStr = params.get("time");
         if (timeStr == null) return "{\"__nativeError\":\"time is required\"}";
         int ms = (int) (Double.parseDouble(timeStr) * 1000);
-        if (mediaPlayer != null && isPrepared) {
-            mediaPlayer.seekTo(ms);
-        } else if (mediaPlayer != null) {
+        if (exoPlayer != null && isPrepared) {
+            exoPlayer.seekTo(ms);
+            double time = ms / 1000.0;
+            emitEvent("timeUpdate", "{\"currentTime\":" + time + "}");
+        } else if (exoPlayer != null) {
             pendingSeekMs = ms;
         }
         return "{}";
@@ -577,7 +587,7 @@ public class NativeAudioPlugin {
         if (volumeStr == null) return "{\"__nativeError\":\"volume is required\"}";
         float v = (float) Math.max(0, Math.min(1, Double.parseDouble(volumeStr)));
         volumeValue = v;
-        if (mediaPlayer != null) mediaPlayer.setVolume(v, v);
+        if (exoPlayer != null) exoPlayer.setVolume(v);
         return "{}";
     }
 
@@ -585,27 +595,32 @@ public class NativeAudioPlugin {
         String rateStr = params.get("rate");
         if (rateStr == null) return "{\"__nativeError\":\"rate is required\"}";
         playbackRate = Math.max(0.1, Math.min(5.0, Double.parseDouble(rateStr)));
-        if (mediaPlayer != null && isPrepared) applyPlaybackParams();
+        if (exoPlayer != null && isPrepared) applyPlaybackParams();
         return "{}";
     }
 
     private String onGetDurationSync() {
-        if (mediaPlayer != null && isPrepared) {
-            return "{\"duration\":" + (mediaPlayer.getDuration() / 1000.0) + "}";
+        if (exoPlayer != null && isPrepared) {
+            long durationMs = exoPlayer.getDuration();
+            double duration = durationMs > 0 ? durationMs / 1000.0 : 0;
+            return "{\"duration\":" + duration + "}";
         }
         return "{\"duration\":0}";
     }
 
     private String onGetCurrentTimeSync() {
-        if (mediaPlayer != null && isPrepared) {
-            return "{\"currentTime\":" + (mediaPlayer.getCurrentPosition() / 1000.0) + "}";
+        if (exoPlayer != null && isPrepared) {
+            double time = exoPlayer.getCurrentPosition() / 1000.0;
+            return "{\"currentTime\":" + time + "}";
         }
         return "{\"currentTime\":0}";
     }
 
     private String onSetLoopSync(Map<String, String> params) {
         boolean loop = "true".equals(params.get("loop"));
-        if (mediaPlayer != null) mediaPlayer.setLooping(loop);
+        if (exoPlayer != null) {
+            exoPlayer.setRepeatMode(loop ? Player.REPEAT_MODE_ONE : Player.REPEAT_MODE_OFF);
+        }
         return "{}";
     }
 
@@ -1066,174 +1081,57 @@ public class NativeAudioPlugin {
         return "{}";
     }
 
-    // -- Method implementations --
+    // -- Async audio method implementations (delegate to sync) --
 
     private void onLoadAudio(Map<String, String> params, String callbackId) {
-        String url = params.get("url");
-        if (url == null || url.isEmpty()) {
-            rejectCallback(callbackId, "url is required");
-            return;
-        }
-
-        releasePlayer();
-
-        try {
-            mediaPlayer = new MediaPlayer();
-            mediaPlayer.setAudioAttributes(
-                new AudioAttributes.Builder()
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .build()
-            );
-
-            mediaPlayer.setOnPreparedListener(mp -> {
-                isPrepared = true;
-                double duration = mp.getDuration() / 1000.0;
-                emitEvent("durationChange", "{\"duration\":" + duration + "}");
-                if (pendingSeekMs != null) {
-                    mp.seekTo(pendingSeekMs);
-                    pendingSeekMs = null;
-                }
-            });
-
-            mediaPlayer.setOnCompletionListener(mp -> {
-                stopTimeUpdates();
-                if (isPrematureCompletion(mp)) {
-                    handlePrematureCompletion(mp);
-                    return;
-                }
-                emitEvent("ended", "{}");
-            });
-
-            mediaPlayer.setOnErrorListener((mp, what, extra) -> {
-                stopTimeUpdates();
-                emitEvent("error", "{\"what\":" + what + ",\"extra\":" + extra + "}");
-                isPrepared = false;
-                return true;
-            });
-
-            mediaPlayer.setOnSeekCompleteListener(mp -> {});
-
-            mediaPlayer.setDataSource(url);
-            mediaPlayer.prepareAsync();
-
-            resolveCallback(callbackId, "{\"loaded\":true}");
-
-        } catch (IOException e) {
-            rejectCallback(callbackId, "Failed to load audio: " + e.getMessage());
+        String result = onLoadAudioSync(params);
+        if (result.contains("__nativeError")) {
+            rejectCallback(callbackId, result);
+        } else {
+            resolveCallback(callbackId, result);
         }
     }
 
     private void onPlay(String callbackId) {
-        if (mediaPlayer == null) {
-            rejectCallback(callbackId, "no audio loaded");
-            return;
-        }
-
-        if (isPrepared) {
-            mediaPlayer.start();
-            startTimeUpdates();
-            emitEvent("play", "{}");
-            resolveCallback(callbackId, "{}");
-        } else {
-            mediaPlayer.setOnPreparedListener(mp -> {
-                isPrepared = true;
-                double duration = mp.getDuration() / 1000.0;
-                emitEvent("durationChange", "{\"duration\":" + duration + "}");
-                if (pendingSeekMs != null) {
-                    mp.seekTo(pendingSeekMs);
-                    pendingSeekMs = null;
-                }
-                mp.start();
-                startTimeUpdates();
-                emitEvent("play", "{}");
-            });
-            resolveCallback(callbackId, "{}");
-        }
+        onPlaySync();
+        resolveCallback(callbackId, "{}");
     }
 
     private void onPause(String callbackId) {
-        if (mediaPlayer != null && mediaPlayer.isPlaying()) {
-            mediaPlayer.pause();
-            stopTimeUpdates();
-            emitEvent("pause", "{}");
-        }
+        onPauseSync();
         resolveCallback(callbackId, "{}");
     }
 
     private void onStop(String callbackId) {
-        if (mediaPlayer != null && isPrepared) {
-            mediaPlayer.stop();
-            isPrepared = false;
-            stopTimeUpdates();
-        }
+        onStopSync();
         resolveCallback(callbackId, "{}");
     }
 
     private void onSeek(Map<String, String> params, String callbackId) {
-        String timeStr = params.get("time");
-        if (timeStr == null) {
-            rejectCallback(callbackId, "time is required");
-            return;
-        }
-        int ms = (int) (Double.parseDouble(timeStr) * 1000);
-        if (mediaPlayer != null && isPrepared) {
-            mediaPlayer.seekTo(ms);
-        } else if (mediaPlayer != null) {
-            pendingSeekMs = ms;
-        }
+        onSeekSync(params);
         resolveCallback(callbackId, "{}");
     }
 
     private void onSetVolume(Map<String, String> params, String callbackId) {
-        String volumeStr = params.get("volume");
-        if (volumeStr == null) {
-            rejectCallback(callbackId, "volume is required");
-            return;
-        }
-        float v = (float) Math.max(0, Math.min(1, Double.parseDouble(volumeStr)));
-        if (mediaPlayer != null) {
-            mediaPlayer.setVolume(v, v);
-        }
+        onSetVolumeSync(params);
         resolveCallback(callbackId, "{}");
     }
 
     private void onSetRate(Map<String, String> params, String callbackId) {
-        String rateStr = params.get("rate");
-        if (rateStr == null) {
-            rejectCallback(callbackId, "rate is required");
-            return;
-        }
-        playbackRate = Math.max(0.1, Math.min(5.0, Double.parseDouble(rateStr)));
-        if (mediaPlayer != null && isPrepared) {
-            applyPlaybackParams();
-        }
+        onSetRateSync(params);
         resolveCallback(callbackId, "{}");
     }
 
     private void onGetDuration(String callbackId) {
-        if (mediaPlayer != null && isPrepared) {
-            double duration = mediaPlayer.getDuration() / 1000.0;
-            resolveCallback(callbackId, "{\"duration\":" + duration + "}");
-        } else {
-            resolveCallback(callbackId, "{\"duration\":0}");
-        }
+        resolveCallback(callbackId, onGetDurationSync());
     }
 
     private void onGetCurrentTime(String callbackId) {
-        if (mediaPlayer != null && isPrepared) {
-            double time = mediaPlayer.getCurrentPosition() / 1000.0;
-            resolveCallback(callbackId, "{\"currentTime\":" + time + "}");
-        } else {
-            resolveCallback(callbackId, "{\"currentTime\":0}");
-        }
+        resolveCallback(callbackId, onGetCurrentTimeSync());
     }
 
     private void onSetLoop(Map<String, String> params, String callbackId) {
-        boolean loop = "true".equals(params.get("loop"));
-        if (mediaPlayer != null) {
-            mediaPlayer.setLooping(loop);
-        }
+        onSetLoopSync(params);
         resolveCallback(callbackId, "{}");
     }
 
@@ -1242,61 +1140,13 @@ public class NativeAudioPlugin {
         resolveCallback(callbackId, "{}");
     }
 
-    // -- Playback params --
+    // -- Playback params (ExoPlayer PlaybackParameters, 无需 API level 检查) --
 
     private void applyPlaybackParams() {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-            try {
-                PlaybackParams params = new PlaybackParams();
-                params.setSpeed((float) playbackRate);
-                mediaPlayer.setPlaybackParams(params);
-            } catch (Exception e) {
-                Log.w(TAG, "PlaybackParams not supported", e);
-            }
-        }
-    }
-
-    // -- Premature completion guard --
-
-    private boolean isPrematureCompletion(MediaPlayer mp) {
         try {
-            if (mp != null) {
-                int duration = mp.getDuration();
-                int position = mp.getCurrentPosition();
-                if (duration > 0 && position < duration - 3000) {
-                    // onCompletion 时 getCurrentPosition() 在某些设备上返回不准确的值，
-                    // 使用最后已知位置作为后备判断
-                    if (lastKnownPositionMs > 0 && lastKnownPositionMs >= duration - 3000) {
-                        Log.i(TAG, "Legitimate completion: lastKnownPos=" + lastKnownPositionMs
-                            + "ms, dur=" + duration + "ms (currentPos=" + position + "ms was inaccurate)");
-                        return false;
-                    }
-                    Log.w(TAG, "Premature onCompletion: pos=" + position + "ms, dur=" + duration + "ms");
-                    return true;
-                }
-            }
+            exoPlayer.setPlaybackParameters(new PlaybackParameters((float) playbackRate));
         } catch (Exception e) {
-            Log.w(TAG, "Failed to check completion position", e);
-        }
-        return false;
-    }
-
-    private void handlePrematureCompletion(MediaPlayer mp) {
-        if (mp == null) {
-            emitEvent("error", "{\"what\":0,\"extra\":0,\"reason\":\"premature_completion\"}");
-            isPrepared = false;
-            return;
-        }
-        try {
-            int position = mp.getCurrentPosition();
-            mp.seekTo(position);
-            mp.start();
-            startTimeUpdates();
-            Log.i(TAG, "Recovered from premature completion at " + position + "ms");
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to recover from premature completion", e);
-            emitEvent("error", "{\"what\":0,\"extra\":0,\"reason\":\"premature_completion\"}");
-            isPrepared = false;
+            Log.w(TAG, "PlaybackParameters not supported", e);
         }
     }
 
@@ -1312,9 +1162,9 @@ public class NativeAudioPlugin {
         timeUpdateRunnable = new Runnable() {
             @Override
             public void run() {
-                if (mediaPlayer != null && mediaPlayer.isPlaying()) {
-                    int pos = mediaPlayer.getCurrentPosition();
-                    lastKnownPositionMs = pos;
+                if (exoPlayer != null && exoPlayer.isPlaying()) {
+                    long pos = exoPlayer.getCurrentPosition();
+                    lastKnownPositionMs = (int) pos;
                     double time = pos / 1000.0;
                     emitEvent("timeUpdate", "{\"currentTime\":" + time + "}");
                 }
@@ -1799,18 +1649,21 @@ public class NativeAudioPlugin {
         stopTimeUpdates();
         pendingSeekMs = null;
         lastKnownPositionMs = 0;
+        playWhenReady = false;
         releaseAudioEffects();
         if (pendingCacheDownload != null) {
             handler.removeCallbacks(pendingCacheDownload);
             pendingCacheDownload = null;
         }
-        if (mediaPlayer != null) {
+        if (exoPlayer != null) {
             try {
-                mediaPlayer.release();
+                exoPlayer.stop();
+                exoPlayer.release();
             } catch (Exception ignored) {}
-            mediaPlayer = null;
+            exoPlayer = null;
         }
         isPrepared = false;
+        currentAudioSessionId = 0;
     }
 
     public void release() {
@@ -1825,12 +1678,13 @@ public class NativeAudioPlugin {
     private String onSetEqualizerSync(Map<String, String> params) {
         String gainsStr = params.get("gains");
         if (gainsStr == null || gainsStr.isEmpty()) return "{\"__nativeError\":\"gains is required\"}";
-        if (mediaPlayer == null) return "{\"__nativeError\":\"no audio loaded\"}";
+        if (exoPlayer == null) return "{\"__nativeError\":\"no audio loaded\"}";
         lastAppliedEqGains = gainsStr;
 
         try {
             if (equalizer == null) {
-                int sessionId = mediaPlayer.getAudioSessionId();
+                int sessionId = exoPlayer.getAudioSessionId();
+                if (sessionId == 0) return "{\"__nativeError\":\"player not prepared\"}";
                 equalizer = new Equalizer(0, sessionId);
                 eqNumberOfBands = equalizer.getNumberOfBands();
                 eqCenterFreqs = new int[eqNumberOfBands];
@@ -1864,11 +1718,12 @@ public class NativeAudioPlugin {
     private String onSetAudioEffectSync(Map<String, String> params) {
         String effect = params.get("effect");
         if (effect == null) return "{\"__nativeError\":\"effect is required\"}";
-        if (mediaPlayer == null) return "{\"__nativeError\":\"no audio loaded\"}";
+        if (exoPlayer == null) return "{\"__nativeError\":\"no audio loaded\"}";
         lastAppliedEffect = effect;
 
         try {
-            int sessionId = mediaPlayer.getAudioSessionId();
+            int sessionId = exoPlayer.getAudioSessionId();
+            if (sessionId == 0) return "{\"__nativeError\":\"player not prepared\"}";
             releaseAudioEffects();
 
             switch (effect) {
@@ -1961,94 +1816,10 @@ public class NativeAudioPlugin {
         }
     }
 
-    // ── Cache-to-local seamless switch ──
+    // ── Cache-to-local switch (不再需要：ExoPlayer 支持运行时切换，当前通过 isCached 在下次播放时使用缓存) ──
 
     /**
-     * 缓存下载完成后，将 MediaPlayer 的数据源从远程 URL 切换到本地缓存文件。
-     * 由于 MediaPlayer 不支持运行时 setDataSource，需创建新实例。
-     *
-     * 注意：当前未在播放中途调用此方法，因为新旧播放器切换会导致约 400ms 的
-     * 音频叠加（双播放器同时输出）或音频空白，表现为顿挫。
-     * 缓存文件会在下次播放时通过 isCached() 检查自动使用。
-     * 保留此方法以备将来可能的 gapless 播放等场景使用。
-     */
-    private void switchToCachedSource(String cacheKey) {
-        if (cacheKey == null || !cacheKey.equals(currentCacheKey)) return;
-        if (playingFromCache) return;
-        if (mediaPlayer == null || !isPrepared) return;
-
-        try {
-            AudioCacheManager cm = AudioCacheManager.getInstance();
-            File cachedFile = cm.getCachedFile(cacheKey);
-            if (cachedFile == null) return;
-
-            int currentPositionMs = mediaPlayer.getCurrentPosition();
-            boolean wasPlaying = mediaPlayer.isPlaying();
-            float currentVolume = volumeValue;
-
-            final MediaPlayer oldPlayer = mediaPlayer;
-            stopTimeUpdates();
-
-            MediaPlayer newPlayer = new MediaPlayer();
-            newPlayer.setAudioAttributes(
-                new AudioAttributes.Builder()
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .build()
-            );
-
-            newPlayer.setOnPreparedListener(mp -> {
-                isPrepared = true;
-                double duration = mp.getDuration() / 1000.0;
-                emitEvent("durationChange", "{\"duration\":" + duration + "}");
-
-                if (currentPositionMs > 0) {
-                    mp.seekTo(currentPositionMs);
-                }
-                mp.setVolume(currentVolume, currentVolume);
-                if (wasPlaying) {
-                    mp.start();
-                    startTimeUpdates();
-                }
-                playingFromCache = true;
-                reapplyAudioEffects(mp.getAudioSessionId());
-                Log.i(TAG, "Seamless switch to cache: " + cacheKey + " at " + currentPositionMs + "ms");
-            });
-
-            newPlayer.setOnCompletionListener(mp -> {
-                stopTimeUpdates();
-                if (isPrematureCompletion(mp)) {
-                    handlePrematureCompletion(mp);
-                    return;
-                }
-                emitEvent("ended", "{}");
-            });
-
-            newPlayer.setOnErrorListener((mp, what, extra) -> {
-                stopTimeUpdates();
-                emitEvent("error", "{\"what\":" + what + ",\"extra\":" + extra + "}");
-                isPrepared = false;
-                return true;
-            });
-
-            newPlayer.setOnSeekCompleteListener(mp -> {});
-
-            newPlayer.setDataSource(cachedFile.getAbsolutePath());
-            mediaPlayer = newPlayer;
-            newPlayer.prepareAsync();
-
-            // 延迟释放旧播放器，避免音频断裂
-            handler.postDelayed(() -> {
-                try { oldPlayer.release(); } catch (Exception ignored) {}
-            }, 500);
-
-        } catch (Exception e) {
-            Log.w(TAG, "Failed to switch to cached source, continuing with remote", e);
-        }
-    }
-
-    /**
-     * 在 MediaPlayer 切换后，重新应用均衡器和音效到新的 audio session。
+     * 在 ExoPlayer media item 切换后，重新应用均衡器和音效到新的 audio session。
      */
     private void reapplyAudioEffects(int sessionId) {
         releaseAudioEffects();
@@ -2110,6 +1881,28 @@ public class NativeAudioPlugin {
             }
         } catch (Exception e) {
             Log.w(TAG, "Failed to reapply EQ gains", e);
+        }
+    }
+
+    // ── Gapless next-track pre-buffering ──
+
+    /**
+     * 接收下一首歌曲的 URL，追加到 ExoPlayer 的内部播放列表。
+     * ExoPlayer 会在当前歌曲结束后自动无缝切换到下一首。
+     * 前端应在歌曲结束前约 20 秒调用此方法，以实现预缓冲无缝切歌。
+     */
+    private String onAddNextAudioSync(Map<String, String> params) {
+        String url = params.get("url");
+        if (url == null || url.isEmpty()) return "{\"__nativeError\":\"url is required\"}";
+        if (exoPlayer == null) return "{\"__nativeError\":\"no audio loaded\"}";
+
+        try {
+            MediaItem nextItem = MediaItem.fromUri(url);
+            exoPlayer.addMediaItem(nextItem);
+            Log.i(TAG, "addNextAudio: queued next track for gapless playback");
+            return "{\"added\":true}";
+        } catch (Exception e) {
+            return "{\"__nativeError\":\"" + e.getMessage().replace("\"", "'") + "\"}";
         }
     }
 

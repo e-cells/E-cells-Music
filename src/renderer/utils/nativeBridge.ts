@@ -95,6 +95,7 @@ export const NativeAudioBridge = {
     nativeCall('preloadCache', options),
   setEqualizer: (options: { gains: string }) => nativeCall('setEqualizer', options),
   setAudioEffect: (options: { effect: string }) => nativeCall('setAudioEffect', options),
+  addNextAudio: (options: { url: string }) => nativeCall('addNextAudio', options),
   addListener,
 };
 

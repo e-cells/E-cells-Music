@@ -274,13 +274,17 @@ export const usePlayerStore = defineStore(
       const events: PlayerEngineEvents = {
         timeUpdate: (currentTime) => {
           if (state.isDraggingProgress) return;
-          if (
-            state.seekTargetTime !== null &&
-            Date.now() - state.seekTimestamp < 500 &&
-            currentTime < state.seekTargetTime - 0.5
-          )
-            return;
-          state.seekTargetTime = null;
+          // Seek guard: MediaPlayer.seekTo() 异步完成，期间可能报告旧位置
+          // 主动回传（NativeAudioPlugin.onSeekSync）会发送接近目标的位置来解除 guard
+          // 定时器轮询的旧位置会被拦截，防止覆盖前端已设置的 seekTargetTime
+          if (state.seekTargetTime !== null && Date.now() - state.seekTimestamp < 1500) {
+            if (Math.abs(currentTime - state.seekTargetTime) > 2.0) {
+              return; // 离 seek 目标太远 → 旧位置，拒绝
+            }
+            state.seekTargetTime = null; // 足够接近，接受并清除 guard
+          } else if (state.seekTargetTime !== null) {
+            state.seekTargetTime = null; // guard 窗口过期
+          }
           state.currentTime = currentTime;
           lastTimeUpdateAt = Date.now();
           const now = Date.now();

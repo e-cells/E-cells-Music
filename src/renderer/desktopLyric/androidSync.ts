@@ -217,8 +217,10 @@ export const initAndroidLyricSync = async () => {
   stops.push(
     watch([seekTimestamp], () => {
       if (!desktopLyricStore.settings.enabled) return;
+      // 优先使用 seekTargetTime（MediaPlayer 异步 seek 时更准确）
+      const time = playerStore.seekTargetTime ?? currentTime.value;
       NativeLyricBridge.seekTo({
-        currentTimeMs: Math.round(currentTime.value * 1000),
+        currentTimeMs: Math.round(time * 1000),
       }).catch(() => {});
     }),
   );

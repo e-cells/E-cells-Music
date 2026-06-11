@@ -136,6 +136,9 @@ export class PlayerEngine {
           });
         }
       }),
+      NativeAudio.addListener('nextTrackStarted', () => {
+        logger.info('PlayerEngine', 'Gapless next track started (ExoPlayer)');
+      }),
     ];
     Promise.all(events).then((listeners) => {
       this.nativeListeners = listeners as Array<{ remove: () => void }>;
@@ -381,6 +384,10 @@ export class PlayerEngine {
       NativeAudio.seek({ time }).catch((err: unknown) => {
         logger.warn('PlayerEngine', 'native seek failed', { time, error: String(err) });
       });
+      // Native 端已在 onSeekSync 中主动发射 timeUpdate，此处跳过合成 timeUpdate
+      // 否则合成 timeUpdate 会解除 seek guard，导致后续旧位置通过 guard
+      this.lastTimeValue = time;
+      return;
     } else if (this.howl) {
       this.howl.seek(time);
     }
@@ -409,6 +416,14 @@ export class PlayerEngine {
       });
     } else if (this.webAudioEngine) {
       this.webAudioEngine.setEffect(effect);
+    }
+  }
+
+  addNextAudio(url: string): void {
+    if (useNativeAudio && url) {
+      NativeAudio.addNextAudio({ url }).catch((err) => {
+        logger.warn('PlayerEngine', 'addNextAudio failed', { err });
+      });
     }
   }
 
@@ -679,10 +694,10 @@ export class PlayerEngine {
           if (query) handlers.playfromsearch?.(query);
         }),
         NativeAudio.addListener('mediaButtonDuck', () => {
-          // 降低音量 - 车机导航播报时
+          // 降低音量 30%（保留 70%） - 通知声、提示音、导航播报时
           const current = this.getVolume();
           this.duckedVolume = current;
-          this.setVolume(Math.max(0.1, current * 0.3));
+          this.setVolume(Math.max(0.1, current * 0.7));
         }),
         NativeAudio.addListener('mediaButtonUnduck', () => {
           // 恢复音量

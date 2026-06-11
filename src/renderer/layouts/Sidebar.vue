@@ -18,6 +18,7 @@ import {
   iconCompass,
   iconExternalLink,
   iconHeart,
+  iconMusic,
   iconPlaylistAdd,
   iconPulse,
   iconPlus,

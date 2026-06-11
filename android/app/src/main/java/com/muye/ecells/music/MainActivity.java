@@ -513,7 +513,23 @@ public class MainActivity extends AppCompatActivity {
         int iconSize = (int) (72 * density); // 72dp
         content.addView(icon, new LinearLayout.LayoutParams(iconSize, iconSize));
 
-        // 标语文字
+        // APP 名称 "易格音乐"
+        TextView appName = new TextView(this);
+        appName.setText("易格音乐");
+        appName.setTextColor(isDark
+            ? Color.parseColor("#E0E0E0")  // 暗黑：浅灰白
+            : Color.parseColor("#333333")); // 亮色：深灰
+        appName.setTextSize(20); // sp
+        appName.setLetterSpacing(0.12f);
+        android.graphics.Typeface typefaceBold = android.graphics.Typeface.create(
+            android.graphics.Typeface.SANS_SERIF, android.graphics.Typeface.BOLD);
+        appName.setTypeface(typefaceBold);
+        LinearLayout.LayoutParams nameParams = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        nameParams.topMargin = (int) (20 * density); // 图标与名称间距 20dp
+        content.addView(appName, nameParams);
+
+        // 标语文字 "懂你的每一首热爱"
         TextView tagline = new TextView(this);
         tagline.setText("懂你的每一首热爱");
         tagline.setTextColor(isDark
@@ -523,7 +539,7 @@ public class MainActivity extends AppCompatActivity {
         tagline.setLetterSpacing(0.08f);
         LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        textParams.topMargin = (int) (16 * density); // 图标与文字间距 16dp
+        textParams.topMargin = (int) (8 * density); // 名称与标语间距 8dp
         content.addView(tagline, textParams);
 
         FrameLayout.LayoutParams contentParams = new FrameLayout.LayoutParams(

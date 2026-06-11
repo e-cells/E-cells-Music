@@ -168,6 +168,13 @@ export async function launchMv(options: LaunchMvOptions): Promise<void> {
       screenOrientation: useSettingStore().screenOrientation,
     });
 
+    toastStore.remove(loadingToastId);
+  } catch {
+    if (gen !== launchGeneration) return;
+    toastStore.loadFailed('MV');
+  }
+}
+
 export interface MvPlaylistItem {
   hash: string;
   title: string;

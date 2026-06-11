@@ -47,7 +47,7 @@ public class LyricOverlayService extends Service {
 
     private static final String TAG = "LyricOverlay";
     private static final int NOTIFICATION_ID = 1002;
-    private static final String CHANNEL_ID = "echomusic_lyric_overlay";
+    private static final String CHANNEL_ID = "EcellsMusic_lyric_overlay";
     private static final String PREFS_NAME = "lyric_overlay_prefs";
 
     private static final String[] LIGHT_COLOR_HEX = {
@@ -276,7 +276,7 @@ public class LyricOverlayService extends Service {
                 // 改进：增加 Toast 提示，防止用户一脸懵
                 handler.post(() -> android.widget.Toast.makeText(
                     this, 
-                    "请在系统设置 -> 应用权限中允许 EchoMusic 显示悬浮窗", 
+                    "请在系统设置 -> 应用权限中允许 EcellsMusic 显示悬浮窗", 
                     android.widget.Toast.LENGTH_LONG
                 ).show());
                 return;
@@ -868,7 +868,7 @@ public class LyricOverlayService extends Service {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
                 CHANNEL_ID,
-                "EchoMusic 桌面歌词",
+                "EcellsMusic 桌面歌词",
                 NotificationManager.IMPORTANCE_LOW
             );
             channel.setDescription("桌面歌词浮窗服务");
@@ -890,7 +890,7 @@ public class LyricOverlayService extends Service {
 
         return new NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("EchoMusic 桌面歌词")
+            .setContentTitle("EcellsMusic 桌面歌词")
             .setContentText("桌面歌词正在运行")
             .setContentIntent(pending)
             .setShowWhen(false)

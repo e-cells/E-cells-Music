@@ -43,7 +43,7 @@ public class MediaNotificationService extends MediaBrowserServiceCompat {
 
     private static final String TAG = "MediaNotification";
     private static final int NOTIFICATION_ID = 1001;
-    private static final String CHANNEL_ID = "echomusic_playback";
+    private static final String CHANNEL_ID = "EcellsMusic_playback";
 
     public static final String ACTION_UPDATE = "com.muye.ecells.music.UPDATE";
     public static final String ACTION_STOP = "com.muye.ecells.music.STOP";
@@ -123,7 +123,7 @@ public class MediaNotificationService extends MediaBrowserServiceCompat {
     @Nullable
     @Override
     public BrowserRoot onGetRoot(@NonNull String clientPackageName, int clientUid, @Nullable Bundle rootHints) {
-        return new BrowserRoot("echomusic_root", null);
+        return new BrowserRoot("EcellsMusic_root", null);
     }
 
     @Override
@@ -132,7 +132,7 @@ public class MediaNotificationService extends MediaBrowserServiceCompat {
     }
 
     private void initMediaSession() {
-        mediaSession = new MediaSessionCompat(this, "EchoMusic");
+        mediaSession = new MediaSessionCompat(this, "EcellsMusic");
         mediaSession.setCallback(new MediaSessionCallbacks());
         mediaSession.setFlags(
             MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS |
@@ -306,7 +306,7 @@ public class MediaNotificationService extends MediaBrowserServiceCompat {
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                 conn.setConnectTimeout(5000);
                 conn.setReadTimeout(5000);
-                conn.setRequestProperty("User-Agent", "EchoMusic/1.0");
+                conn.setRequestProperty("User-Agent", "EcellsMusic/1.0");
                 InputStream is = conn.getInputStream();
 
                 ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -428,7 +428,7 @@ public class MediaNotificationService extends MediaBrowserServiceCompat {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
                 CHANNEL_ID,
-                "EchoMusic 播放控制",
+                "EcellsMusic 播放控制",
                 NotificationManager.IMPORTANCE_LOW
             );
             channel.setDescription("音乐播放状态和控制");

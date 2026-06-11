@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 暗黑模式启动屏背景色 -->
+    <color name="splash_background">#030406</color>
+</resources>

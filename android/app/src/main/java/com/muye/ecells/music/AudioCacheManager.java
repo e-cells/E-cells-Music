@@ -71,7 +71,7 @@ public class AudioCacheManager {
 
     private AudioCacheManager(Context ctx) {
         this.context = ctx.getApplicationContext();
-        File baseCacheDir = new File(this.context.getCacheDir(), "echomusic_cache");
+        File baseCacheDir = new File(this.context.getCacheDir(), "EcellsMusic_cache");
         this.cacheDir = new File(baseCacheDir, CACHE_DIR_NAME);
         if (!this.cacheDir.exists()) {
             this.cacheDir.mkdirs();
@@ -177,7 +177,7 @@ public class AudioCacheManager {
             conn = (HttpURLConnection) url.openConnection();
             conn.setConnectTimeout(15000);
             conn.setReadTimeout(30000);
-            conn.setRequestProperty("User-Agent", "EchoMusic/1.0");
+            conn.setRequestProperty("User-Agent", "EcellsMusic/1.0");
             conn.connect();
 
             int responseCode = conn.getResponseCode();

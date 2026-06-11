@@ -9,13 +9,70 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>EcellsMusic</title>
+    <!-- 在任何外部 CSS/JS 之前，第一时间读取主题并应用背景色，防止白屏/黑屏闪烁 -->
+    <script>
+      (function() {
+        var isDark = true; // 默认暗黑
+        try {
+          var s = JSON.parse(localStorage.getItem('setting') || '{}');
+          var theme = s.theme || 'system';
+          if (theme === 'dark') {
+            isDark = true;
+          } else if (theme === 'light') {
+            isDark = false;
+          } else {
+            // system 或 sensor 模式：跟随系统
+            isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          }
+        } catch(e) {}
+        var bgColor = isDark ? '#030406' : '#eef2f7';
+        document.documentElement.style.backgroundColor = bgColor;
+        document.documentElement.style.setProperty('--preload-bg', bgColor);
+        document.documentElement.style.setProperty('--preload-color', isDark ? '#1DB954' : '#10b981');
+        document.documentElement.style.setProperty('--preload-tagline', isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.38)');
+      })();
+    </script>
     <style>
-      body { margin: 0; padding: 0; background: #030406; }
-      #app { width: 100%; height: 100vh; background: #030406; }
+      body { margin: 0; padding: 0; background: var(--preload-bg, #030406); }
+      #app { width: 100%; height: 100vh; background: var(--preload-bg, #030406); }
     </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <style>
+        .preload-container {
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          align-items: center;
+          height: 100vh;
+          background-color: var(--preload-bg, #030406);
+          color: var(--preload-color, #1DB954);
+          font-family: sans-serif;
+          gap: 14px;
+        }
+        .preload-container h2 {
+          font-size: 18px;
+          letter-spacing: 0.1em;
+          animation: preload-pulse 1.5s ease-in-out infinite;
+          margin: 0;
+        }
+        .preload-tagline {
+          font-size: 13px;
+          letter-spacing: 0.08em;
+          color: var(--preload-tagline, rgba(255,255,255,0.4));
+          margin: 0;
+        }
+        @keyframes preload-pulse {
+          0%, 100% { opacity: 0.4; }
+          50% { opacity: 1; }
+        }
+      </style>
+      <div class="preload-container">
+        <h2>EcellsMusic...</h2>
+        <p class="preload-tagline">易格音乐，懂你的每一首热爱</p>
+      </div>
+    </div>
     <script type="module" src="/src/renderer/main.ts"></script>
   </body>
 </html>

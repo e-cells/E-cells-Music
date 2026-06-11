@@ -30,7 +30,7 @@ android {
 
     signingConfigs {
         release {
-            storeFile rootProject.file('echomusic-release.jks')
+            storeFile rootProject.file('EcellsMusic-release.jks')
             storePassword keystoreProperties['storePassword'] ?: ''
             keyAlias keystoreProperties['keyAlias'] ?: ''
             keyPassword keystoreProperties['keyPassword'] ?: ''

@@ -1,4 +1,4 @@
-# === EchoMusic ProGuard Rules ===
+# === EcellsMusic ProGuard Rules ===
 
 # Preserve line numbers for crash reports
 -keepattributes SourceFile,LineNumberTable

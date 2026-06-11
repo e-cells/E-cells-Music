@@ -224,6 +224,12 @@ const closeWindow = () => {
 };
 
 onMounted(async () => {
+  // 前端页面 DOM 已渲染，通知原生 App 关闭启动屏遮罩
+  try {
+    window.prompt('__native__', 'native://hideSplash');
+  } catch (e) {
+    // 非 Android 环境忽略
+  }
   await initStatus();
 });
 
@@ -298,10 +304,14 @@ onUnmounted(() => {
       </div>
     </main>
 
-    <footer class="absolute bottom-6 left-0 right-0 text-center pointer-events-none">
+    <footer class="absolute bottom-6 left-0 right-0 text-center pointer-events-none flex flex-col items-center gap-1.5">
       <span
         class="text-[11px] font-bold text-black/20 dark:text-white/20 uppercase tracking-[2px]"
         >易格音乐(E-cells-Music)</span
+      >
+      <span
+        class="text-[13px] text-black/60 dark:text-white/60 tracking-[0.08em]"
+        >懂你的每一首热爱</span
       >
     </footer>
   </div>

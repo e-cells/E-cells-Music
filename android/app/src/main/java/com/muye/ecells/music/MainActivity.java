@@ -16,6 +16,8 @@ import android.view.WindowInsets;
 import android.graphics.Insets;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.view.TextureView;
 import android.view.Gravity;
@@ -46,7 +48,7 @@ import org.mozilla.geckoview.GeckoSession.PromptDelegate.PromptResponse;
 
 public class MainActivity extends AppCompatActivity {
 
-    private static final String TAG = "EchoMusic";
+    private static final String TAG = "EcellsMusic";
     private static final int REQUEST_NOTIFICATION_PERMISSION = 1001;
     private static final int REQUEST_INSTALL_PERMISSION = 2002;
 
@@ -58,6 +60,7 @@ public class MainActivity extends AppCompatActivity {
     private String pendingVoiceSearchQuery = null;
     private int lastNightMode = -1;
     private volatile boolean isPageReady = false;
+    private View loadingOverlay; // 原生加载遮罩层（图标 + 标语）
 
     // === 主题跟随模式：默认跟随系统 ===
     private String themeAutoMode = "system"; // 可选值: "system" 或 "sensor"
@@ -129,7 +132,29 @@ public class MainActivity extends AppCompatActivity {
             getWindow().setAttributes(layoutParams);
         }
         
-        getWindow().getDecorView().setBackgroundColor(Color.parseColor("#121212"));
+        // 根据前端 Pinia 持久化的主题设置，动态设置 DecorView 背景色
+        // 确保原生容器背景与前端页面背景一致，消除启动时的色差闪烁
+        boolean isDarkBg = true; // 默认暗黑
+        try {
+            android.content.SharedPreferences sp = getSharedPreferences("pinia_stores", Context.MODE_PRIVATE);
+            String settingJson = sp.getString("setting", null);
+            if (settingJson != null) {
+                JSONObject settingObj = new JSONObject(settingJson);
+                String theme = settingObj.optString("theme", "system");
+                if ("dark".equals(theme)) {
+                    isDarkBg = true;
+                } else if ("light".equals(theme)) {
+                    isDarkBg = false;
+                } else {
+                    // system 或 sensor：跟随 Android 系统夜间模式
+                    int nightMode = getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
+                    isDarkBg = (nightMode == Configuration.UI_MODE_NIGHT_YES);
+                }
+            }
+        } catch (Exception e) {
+            // 读取失败，使用默认暗黑
+        }
+        getWindow().getDecorView().setBackgroundColor(Color.parseColor(isDarkBg ? "#030406" : "#eef2f7"));
 
         try {
             sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
@@ -143,6 +168,12 @@ public class MainActivity extends AppCompatActivity {
 
             // 原生视频播放器的 TextureView 覆盖层
             TextureView nativeVideoSurface = findViewById(R.id.nativeVideoSurface);
+
+            // 创建原生加载遮罩层（图标 + 标语），覆盖在 GeckoView 之上
+            // 原生 SplashScreen 退出后用户看到此遮罩，等 Vue 挂载完毕后通过 native://hideSplash 淡出
+            loadingOverlay = createLoadingOverlay(isDarkBg);
+            ((FrameLayout) geckoView.getParent()).addView(loadingOverlay, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
             geckoView.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
                 @Override
@@ -232,6 +263,27 @@ public class MainActivity extends AppCompatActivity {
             public GeckoResult<PromptResponse> onTextPrompt(GeckoSession promptSession, TextPrompt prompt) {
                 String uri = prompt.defaultValue;
                 if (uri != null && uri.startsWith("native://")) {
+                    // === 前端通知关闭原生启动屏 + 淡出加载遮罩 ===
+                    if (uri.startsWith("native://hideSplash")) {
+                        isPageReady = true;
+                        // 在 UI 线程淡出原生加载遮罩层
+                        runOnUiThread(() -> {
+                            if (loadingOverlay != null) {
+                                loadingOverlay.animate()
+                                    .alpha(0f)
+                                    .setDuration(400)
+                                    .withEndAction(() -> {
+                                        if (loadingOverlay != null) {
+                                            FrameLayout parent = (FrameLayout) loadingOverlay.getParent();
+                                            if (parent != null) parent.removeView(loadingOverlay);
+                                            loadingOverlay = null;
+                                        }
+                                    })
+                                    .start();
+                            }
+                        });
+                        return GeckoResult.fromValue(prompt.confirm("ok"));
+                    }
                     // === 拦截前端传来的设置更改 (通过 prompt 方式) ===
                     if (uri.startsWith("native://setThemeAutoMode")) {
                         String mode = uri.substring(uri.indexOf("mode=") + 5);
@@ -248,8 +300,7 @@ public class MainActivity extends AppCompatActivity {
         session.setProgressDelegate(new GeckoSession.ProgressDelegate() {
             @Override
             public void onPageStart(GeckoSession progSession, String url) {
-                // 页面开始加载即可关闭原生 SplashScreen，让 Loading.vue 动画尽快显示
-                isPageReady = true;
+                // 不在此处关闭 SplashScreen，等前端 Loading.vue 挂载完成后通过 native://hideSplash 通知
                 // === 页面开始加载时，从 SharedPreferences 恢复 store 数据到 localStorage ===
                 // 此时 JS 还未执行，localStorage 写入会在 Pinia rehydrate 之前生效
                 try {
@@ -439,6 +490,50 @@ public class MainActivity extends AppCompatActivity {
         super.onDestroy();
     }
 
+    /**
+     * 创建原生加载遮罩层，覆盖在 GeckoView 之上。
+     * 显示 App 图标 + 标语文字，背景色与主题匹配。
+     * 原生 SplashScreen 退出后用户看到此遮罩，等 Vue 挂载完毕后淡出消失。
+     */
+    private View createLoadingOverlay(boolean isDark) {
+        float density = getResources().getDisplayMetrics().density;
+
+        // 外层容器：全屏、主题背景色
+        FrameLayout overlay = new FrameLayout(this);
+        overlay.setBackgroundColor(Color.parseColor(isDark ? "#030406" : "#eef2f7"));
+
+        // 内容区：纵向排列，居中
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setGravity(Gravity.CENTER_HORIZONTAL);
+
+        // App 图标
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(R.mipmap.ic_launcher);
+        int iconSize = (int) (72 * density); // 72dp
+        content.addView(icon, new LinearLayout.LayoutParams(iconSize, iconSize));
+
+        // 标语文字
+        TextView tagline = new TextView(this);
+        tagline.setText("懂你的每一首热爱");
+        tagline.setTextColor(isDark
+            ? Color.argb(0x99, 0xFF, 0xFF, 0xFF)  // 暗黑：60% 白色
+            : Color.argb(0x99, 0x00, 0x00, 0x00)); // 亮色：60% 黑色
+        tagline.setTextSize(14); // sp
+        tagline.setLetterSpacing(0.08f);
+        LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        textParams.topMargin = (int) (16 * density); // 图标与文字间距 16dp
+        content.addView(tagline, textParams);
+
+        FrameLayout.LayoutParams contentParams = new FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        contentParams.gravity = Gravity.CENTER;
+        overlay.addView(content, contentParams);
+
+        return overlay;
+    }
+
     private void showErrorScreen(String message) {
         try {
             FrameLayout layout = new FrameLayout(this);
@@ -515,11 +610,11 @@ public class MainActivity extends AppCompatActivity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
             if (nm == null) return;
-            NotificationChannel playbackChannel = new NotificationChannel("echomusic_playback", "EchoMusic 播放控制", NotificationManager.IMPORTANCE_LOW);
+            NotificationChannel playbackChannel = new NotificationChannel("EcellsMusic_playback", "EcellsMusic 播放控制", NotificationManager.IMPORTANCE_LOW);
             playbackChannel.setShowBadge(false);
             nm.createNotificationChannel(playbackChannel);
 
-            NotificationChannel lyricChannel = new NotificationChannel("echomusic_lyric_overlay", "EchoMusic 桌面歌词", NotificationManager.IMPORTANCE_LOW);
+            NotificationChannel lyricChannel = new NotificationChannel("EcellsMusic_lyric_overlay", "EcellsMusic 桌面歌词", NotificationManager.IMPORTANCE_LOW);
             lyricChannel.setShowBadge(false);
             nm.createNotificationChannel(lyricChannel);
         }

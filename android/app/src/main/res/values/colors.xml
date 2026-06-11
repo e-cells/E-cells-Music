@@ -3,4 +3,6 @@
     <color name="colorPrimary">#030406</color>
     <color name="colorPrimaryDark">#000000</color>
     <color name="colorAccent">#1DB954</color>
+    <!-- 亮色模式启动屏背景色 -->
+    <color name="splash_background">#eef2f7</color>
 </resources>

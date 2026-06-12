@@ -29,6 +29,10 @@ import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
+
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.splashscreen.SplashScreen;
 import androidx.core.app.ActivityCompat;
@@ -54,13 +58,17 @@ public class MainActivity extends AppCompatActivity {
 
     private GeckoView geckoView;
     private GeckoSession session;
-    private GeckoRuntime runtime;
+    private volatile GeckoRuntime runtime; // volatile: 跨线程赋值后 UI 线程需立即可见
     private NativeAudioPlugin audioPlugin;
     private AssetServer assetServer;
     private String pendingVoiceSearchQuery = null;
     private int lastNightMode = -1;
     private volatile boolean isPageReady = false;
     private View loadingOverlay; // 原生加载遮罩层（图标 + 标语）
+
+    // === localStorage 恢复脚本缓存 ===
+    private volatile String cachedRestoreScript = null;
+    private volatile boolean spDirty = true; // SP 数据变更标记，初始为 true 强制首次构建
 
     // === 主题跟随模式：默认跟随系统 ===
     private String themeAutoMode = "system"; // 可选值: "system" 或 "sensor"
@@ -190,27 +198,104 @@ public class MainActivity extends AppCompatActivity {
             createNotificationChannels();
             requestNotificationPermission();
 
-            // IO 密集型操作移到后台线程，完成后在 UI 线程初始化 GeckoView
+            // === 并行初始化：两条轨道同时启动 ===
+            // 轨道A（IO线程）：AssetServer + AudioCacheManager + ApkUpdateManager
+            // 轨道B（UI线程）：GeckoRuntime.create() — 必须在 Activity 的 UI 线程创建
+            // 汇合后：initGeckoView（session.open + loadUri）
+            // 效果：GeckoRuntime.create() 和 AssetServer 启动并行执行，省去串行等待时间
+
+            final TextureView finalNativeVideoSurface = nativeVideoSurface;
+
+            // 用于两条轨道同步的 CountDownLatch
+            CountDownLatch initLatch = new CountDownLatch(2);
+            AtomicReference<AssetServer> serverRef = new AtomicReference<>();
+            AtomicReference<Exception> serverError = new AtomicReference<>();
+            AtomicReference<Exception> runtimeError = new AtomicReference<>();
+
+            // 轨道A：IO 密集型操作（AssetServer 启动、缓存初始化、更新管理器初始化）
             new Thread(() -> {
                 try {
-                    assetServer = new AssetServer(MainActivity.this);
-                    assetServer.startServer();
-
+                    AssetServer server = new AssetServer(MainActivity.this);
+                    server.startServer();
                     AudioCacheManager.initialize(MainActivity.this);
                     ApkUpdateManager.initialize(MainActivity.this);
+                    serverRef.set(server);
+                    Log.i(TAG, "轨道A完成: AssetServer + CacheManager + UpdateManager 已初始化");
+                } catch (Exception e) {
+                    serverError.set(e);
+                    Log.e(TAG, "轨道A失败", e);
+                }
+                initLatch.countDown();
+            }, "init-server").start();
 
-                    // 回到 UI 线程完成 GeckoView 初始化
+            // 轨道B：GeckoRuntime 创建
+            // GeckoRuntime.create() 必须在主线程调用，通过 runOnUiThread + CountDownLatch 同步
+            // 与轨道A并行执行，省去原来 AssetServer 完成后才创建 GeckoRuntime 的串行等待
+            new Thread(() -> {
+                try {
+                    // 先检查是否已有预创建的 GeckoRuntime（由 MusicApplication 或进程复用）
+                    GeckoRuntime existingRuntime = MusicApplication.getGeckoRuntime();
+                    if (existingRuntime != null) {
+                        runtime = existingRuntime;
+                        Log.i(TAG, "轨道B完成: 复用已有 GeckoRuntime（耗时≈0ms）");
+                    } else {
+                        // 在 UI 线程创建 GeckoRuntime（与原始代码行为一致）
+                        final CountDownLatch rtLatch = new CountDownLatch(1);
+                        runOnUiThread(() -> {
+                            try {
+                                org.mozilla.geckoview.ContentBlocking.Settings cbSettings =
+                                    new org.mozilla.geckoview.ContentBlocking.Settings.Builder()
+                                        .antiTracking(org.mozilla.geckoview.ContentBlocking.AntiTracking.NONE)
+                                        .strictSocialTrackingProtection(false)
+                                        .build();
+                                runtime = GeckoRuntime.create(MainActivity.this,
+                                    new GeckoRuntimeSettings.Builder()
+                                        .contentBlocking(cbSettings)
+                                        .build()
+                                );
+                                MusicApplication.setGeckoRuntime(runtime);
+                                Log.i(TAG, "轨道B完成: GeckoRuntime 创建成功");
+                            } catch (Throwable t) {
+                                // catch Throwable 而非 Exception，捕获 UnsatisfiedLinkError 等致命错误
+                                runtimeError.set(new Exception("GeckoRuntime 创建失败: " + t.getMessage(), t));
+                                Log.e(TAG, "轨道B失败: GeckoRuntime 创建异常", t);
+                            }
+                            rtLatch.countDown();
+                        });
+                        rtLatch.await(5, TimeUnit.SECONDS);
+                    }
+                } catch (Exception e) {
+                    runtimeError.set(e);
+                    Log.e(TAG, "轨道B异常", e);
+                }
+                initLatch.countDown();
+            }, "init-runtime").start();
+
+            // 汇合线程：等待两条轨道都完成后，执行 GeckoView 初始化
+            new Thread(() -> {
+                try {
+                    initLatch.await(10, TimeUnit.SECONDS);
                     runOnUiThread(() -> {
+                        // 检查错误
+                        if (serverError.get() != null) {
+                            showErrorScreen("服务器初始化失败: " + serverError.get().getMessage());
+                            return;
+                        }
+                        if (runtimeError.get() != null || runtime == null) {
+                            showErrorScreen("运行时初始化失败");
+                            return;
+                        }
                         try {
-                            initGeckoView(nativeVideoSurface);
+                            assetServer = serverRef.get();
+                            initGeckoView(finalNativeVideoSurface);
                         } catch (Exception e) {
                             showErrorScreen("视图初始化失败: " + e.getMessage());
                         }
                     });
                 } catch (Exception e) {
-                    runOnUiThread(() -> showErrorScreen("初始化失败: " + e.getMessage()));
+                    runOnUiThread(() -> showErrorScreen("初始化超时: " + e.getMessage()));
                 }
-            }).start();
+            }, "init-join").start();
 
         } catch (Exception e) {
             showErrorScreen("初始化失败: " + e.getMessage());
@@ -218,17 +303,11 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void initGeckoView(TextureView nativeVideoSurface) {
+        // GeckoRuntime 已由 MusicApplication 预创建，或由并行轨道B fallback 创建
+        // 此处 runtime 已就绪，直接进行 Session 配置和页面加载
         if (runtime == null) {
-            org.mozilla.geckoview.ContentBlocking.Settings cbSettings =
-                new org.mozilla.geckoview.ContentBlocking.Settings.Builder()
-                    .antiTracking(org.mozilla.geckoview.ContentBlocking.AntiTracking.NONE)
-                    .strictSocialTrackingProtection(false)
-                    .build();
-            runtime = GeckoRuntime.create(this,
-                new GeckoRuntimeSettings.Builder()
-                    .contentBlocking(cbSettings)
-                    .build()
-            );
+            showErrorScreen("GeckoRuntime 未初始化");
+            return;
         }
 
         session = new GeckoSession();
@@ -303,20 +382,11 @@ public class MainActivity extends AppCompatActivity {
                 // 不在此处关闭 SplashScreen，等前端 Loading.vue 挂载完成后通过 native://hideSplash 通知
                 // === 页面开始加载时，从 SharedPreferences 恢复 store 数据到 localStorage ===
                 // 此时 JS 还未执行，localStorage 写入会在 Pinia rehydrate 之前生效
+                // 使用缓存的恢复脚本，避免每次页面加载都重新构建
                 try {
-                    android.content.SharedPreferences sp = getSharedPreferences("pinia_stores", Context.MODE_PRIVATE);
-                    java.util.Map<String, ?> all = sp.getAll();
-                    if (!all.isEmpty()) {
-                        StringBuilder sb = new StringBuilder("try{");
-                        for (java.util.Map.Entry<String, ?> entry : all.entrySet()) {
-                            String key = entry.getKey();
-                            String val = String.valueOf(entry.getValue());
-                            String quotedVal = JSONObject.quote(val);
-                            String quotedKey = JSONObject.quote(key);
-                            sb.append("localStorage.setItem(").append(quotedKey).append(",").append(quotedVal).append(");");
-                        }
-                        sb.append("}catch(e){}");
-                        evalJs(sb.toString());
+                    String script = getRestoreScript();
+                    if (script != null && !script.isEmpty()) {
+                        evalJs(script);
                     }
                 } catch (Exception e) {
                     Log.w("MainActivity", "Failed to restore SharedPreferences to localStorage", e);
@@ -395,6 +465,51 @@ public class MainActivity extends AppCompatActivity {
         }
 
         runOnUiThread(() -> pushSystemThemeToFrontend());
+    }
+
+    /**
+     * 获取缓存的 localStorage 恢复脚本。
+     * 仅在 SharedPreferences 数据变更时重新构建，避免每次 onPageStart 重复拼接字符串。
+     */
+    private String getRestoreScript() {
+        if (cachedRestoreScript != null && !spDirty) {
+            return cachedRestoreScript;
+        }
+
+        try {
+            android.content.SharedPreferences sp = getSharedPreferences("pinia_stores", Context.MODE_PRIVATE);
+            java.util.Map<String, ?> all = sp.getAll();
+            if (all.isEmpty()) {
+                cachedRestoreScript = "";
+                spDirty = false;
+                return cachedRestoreScript;
+            }
+
+            StringBuilder sb = new StringBuilder("try{");
+            for (java.util.Map.Entry<String, ?> entry : all.entrySet()) {
+                String key = entry.getKey();
+                String val = String.valueOf(entry.getValue());
+                String quotedVal = JSONObject.quote(val);
+                String quotedKey = JSONObject.quote(key);
+                sb.append("localStorage.setItem(").append(quotedKey).append(",").append(quotedVal).append(");");
+            }
+            sb.append("}catch(e){}");
+
+            cachedRestoreScript = sb.toString();
+            spDirty = false;
+            return cachedRestoreScript;
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to build restore script", e);
+            return "";
+        }
+    }
+
+    /**
+     * 使恢复脚本缓存失效。
+     * 由 NativeAudioPlugin.persistStore 成功写入 SP 后调用。
+     */
+    void invalidateRestoreCache() {
+        spDirty = true;
     }
 
     void evalJs(String script) {

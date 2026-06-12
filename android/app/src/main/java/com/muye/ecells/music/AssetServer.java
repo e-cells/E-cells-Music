@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Map;
 import java.util.HashMap;
+import java.util.zip.GZIPOutputStream;
 
 import fi.iki.elonen.NanoHTTPD;
 
@@ -18,9 +19,11 @@ public class AssetServer extends NanoHTTPD {
     private static final String TAG = "AssetServer";
     private static final String ASSET_PREFIX = "public/";
     private static final int PORT = 18387;
+    private static final int GZIP_THRESHOLD = 256; // 最小压缩阈值（字节）
 
     private final AssetManager assetManager;
     private byte[] cachedIndexHtml;
+    private byte[] cachedIndexHtmlGzip;
 
     private static final Map<String, String> MIME_TYPES = new HashMap<>();
     static {
@@ -86,25 +89,121 @@ public class AssetServer extends NanoHTTPD {
                 if (isHtml) {
                     bytes = injectGeckoViewInit(bytes);
                     cachedIndexHtml = bytes;
+                    // 预生成 GZIP 版本的 index.html
+                    cachedIndexHtmlGzip = gzipBytes(bytes);
                 }
             }
 
             String ext = getExtension(uri);
             String mime = MIME_TYPES.getOrDefault(ext, "application/octet-stream");
 
-            Response response = newFixedLengthResponse(Response.Status.OK, mime, new ByteArrayInputStream(bytes), bytes.length);
-
-            // Cache headers: static assets cache 24h, HTML no-cache (has injected script)
-            if (isHtml) {
-                response.addHeader("Cache-Control", "no-cache");
-            } else {
-                response.addHeader("Cache-Control", "public, max-age=86400");
+            // 检测客户端是否支持 GZIP
+            boolean acceptGzip = false;
+            String acceptEncoding = session.getHeaders().get("accept-encoding");
+            if (acceptEncoding != null && acceptEncoding.contains("gzip")) {
+                acceptGzip = true;
             }
 
+            // 对可压缩内容进行 GZIP 压缩
+            if (acceptGzip && isCompressible(mime) && bytes.length > GZIP_THRESHOLD) {
+                byte[] gzipBytes;
+                // index.html 使用预缓存的 GZIP 版本
+                if (isHtml && cachedIndexHtmlGzip != null) {
+                    gzipBytes = cachedIndexHtmlGzip;
+                } else {
+                    gzipBytes = gzipBytes(bytes);
+                }
+
+                if (gzipBytes != null && gzipBytes.length < bytes.length) {
+                    Response response = newFixedLengthResponse(Response.Status.OK, mime,
+                        new ByteArrayInputStream(gzipBytes), gzipBytes.length);
+                    response.addHeader("Content-Encoding", "gzip");
+                    response.addHeader("Vary", "Accept-Encoding");
+                    addCacheHeaders(response, uri, isHtml);
+                    Log.d(TAG, "GZIP: " + uri + " " + bytes.length + " -> " + gzipBytes.length + " bytes");
+                    return response;
+                }
+            }
+
+            // 未压缩的响应路径
+            Response response = newFixedLengthResponse(Response.Status.OK, mime, new ByteArrayInputStream(bytes), bytes.length);
+            addCacheHeaders(response, uri, isHtml);
             return response;
 
         } catch (IOException e) {
             return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "Not found: " + uri);
+        }
+    }
+
+    /**
+     * 添加缓存头。
+     * - index.html: no-cache（每次都需要最新版本）
+     * - 带 Hash 的静态资源: public, max-age=31536000, immutable（1年强缓存，文件名即版本）
+     * - 其他资源: public, max-age=604800（7天缓存）
+     */
+    private void addCacheHeaders(Response response, String uri, boolean isHtml) {
+        if (isHtml) {
+            response.addHeader("Cache-Control", "no-cache");
+            return;
+        }
+        if (isHashedAsset(uri)) {
+            response.addHeader("Cache-Control", "public, max-age=31536000, immutable");
+        } else {
+            response.addHeader("Cache-Control", "public, max-age=604800");
+        }
+    }
+
+    /**
+     * 判断 URI 是否指向带 Hash 的不可变静态资源。
+     * Vite 构建的文件名格式：name-[hash].ext，其中 hash 为 7-12 位字母数字字符。
+     * 示例：vendor-vue-DxvQVFli.js, Home-lzgzOaUb.js, AlbumDetail-ByQCX-wa.css
+     */
+    private boolean isHashedAsset(String uri) {
+        int lastSlash = uri.lastIndexOf('/');
+        String fileName = lastSlash >= 0 ? uri.substring(lastSlash + 1) : uri;
+        int lastDot = fileName.lastIndexOf('.');
+        if (lastDot <= 0) return false;
+        String baseName = fileName.substring(0, lastDot);
+        int lastDash = baseName.lastIndexOf('-');
+        if (lastDash <= 0 || lastDash >= baseName.length() - 6) return false;
+        String hashPart = baseName.substring(lastDash + 1);
+        // Hash 应为 7-16 位字母数字或下划线
+        if (hashPart.length() < 7 || hashPart.length() > 16) return false;
+        for (int i = 0; i < hashPart.length(); i++) {
+            char c = hashPart.charAt(i);
+            if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                  (c >= '0' && c <= '9') || c == '_' || c == '-')) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * 判断 MIME 类型是否适合 GZIP 压缩。
+     * 排除已压缩的二进制格式（图片、视频、字体、音频）。
+     */
+    private boolean isCompressible(String mime) {
+        return mime.startsWith("text/")
+            || mime.equals("application/javascript")
+            || mime.equals("application/json")
+            || mime.equals("application/wasm")
+            || mime.equals("image/svg+xml");
+    }
+
+    /**
+     * 对字节数组进行 GZIP 压缩
+     */
+    private byte[] gzipBytes(byte[] data) {
+        try {
+            ByteArrayOutputStream baos = new ByteArrayOutputStream(data.length);
+            GZIPOutputStream gzipOut = new GZIPOutputStream(baos);
+            gzipOut.write(data);
+            gzipOut.close();
+            return baos.toByteArray();
+        } catch (IOException e) {
+            Log.w(TAG, "GZIP compression failed", e);
+            return null;
         }
     }
 

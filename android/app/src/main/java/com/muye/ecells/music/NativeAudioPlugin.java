@@ -1616,6 +1616,8 @@ public class NativeAudioPlugin {
                 .edit()
                 .putString(storeId, data)
                 .commit(); // commit() 同步写磁盘，确保数据落盘
+            // SP 数据变更，使恢复脚本缓存失效
+            a.invalidateRestoreCache();
             if (!ok) {
                 Log.e(TAG, "persistStore commit failed for " + storeId);
                 return "{\"__nativeError\":\"commit failed\"}";
@@ -1641,6 +1643,8 @@ public class NativeAudioPlugin {
         if (!ok) {
             Log.e(TAG, "persistAllCachedStores commit failed");
         }
+        // SP 数据变更，使恢复脚本缓存失效
+        a.invalidateRestoreCache();
     }
 
     // -- Cleanup --

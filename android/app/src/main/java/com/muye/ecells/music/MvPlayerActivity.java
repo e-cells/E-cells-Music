@@ -65,6 +65,9 @@ public class MvPlayerActivity extends AppCompatActivity {
 
     private static final int HIDE_CONTROLS_DELAY_MS = 3000;
     private static final int PROGRESS_UPDATE_INTERVAL_MS = 500;
+    private static final int TOUCH_SLOP = 30;
+    private static final int SWIPE_THRESHOLD = 100;
+    private static final int SEEK_BY_MS = 8000;
 
     // 静态实例引用（供 NativeAudioPlugin 回调）
     public static volatile MvPlayerActivity currentInstance;
@@ -280,10 +283,18 @@ public class MvPlayerActivity extends AppCompatActivity {
         playlistRecyclerView.setAdapter(playlistAdapter);
         playlistRecyclerView.scrollToPosition(currentIndex);
 
-        // 如果之前保存了面板可见状态，或竖屏有播放列表时自动显示
+        // 根据方向设置播放列表显隐
         int orientation = getResources().getConfiguration().orientation;
-        if (isPlaylistVisible || (playlistSize > 1 && orientation != Configuration.ORIENTATION_LANDSCAPE)) {
-            showPlaylistPanel();
+        if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
+            // 横屏全屏：隐藏抽屉，显示播放列表按钮
+            landscapePlaylistDrawer.setVisibility(View.GONE);
+            btnPlaylist.setVisibility(View.VISIBLE);
+        } else {
+            // 竖屏非全屏：始终显示播放列表，隐藏按钮
+            btnPlaylist.setVisibility(View.GONE);
+            infoScroll.setVisibility(View.GONE);
+            portraitPlaylistPanel.setVisibility(View.VISIBLE);
+            isPlaylistVisible = true;
         }
     }
 
@@ -394,30 +405,58 @@ public class MvPlayerActivity extends AppCompatActivity {
 
     private void setupControls() {
         // 视频区域触摸处理：
-        // 竖屏/横屏统一：左侧50%切换功能条，右侧50%切换播放列表
-        // 竖屏模式下功能条不自动隐藏，但可手动切换
+        // 支持两种手势：点击（切换控件/播放列表）、左右滑动快退/快进
         playerView.setOnTouchListener((v, event) -> {
-            if (event.getAction() == android.view.MotionEvent.ACTION_DOWN) {
-                touchDownX = event.getX();
-                touchDownY = event.getY();
-                isTouchTap = true;
-            } else if (event.getAction() == android.view.MotionEvent.ACTION_MOVE) {
-                float dx = Math.abs(event.getX() - touchDownX);
-                float dy = Math.abs(event.getY() - touchDownY);
-                if (dx > 20 || dy > 20) isTouchTap = false;
-            } else if (event.getAction() == android.view.MotionEvent.ACTION_UP && isTouchTap) {
-                boolean isRightSide = touchDownX > v.getWidth() * 0.5f;
-                if (isRightSide && playlistSize > 1) {
-                    // 右侧50%：切换播放列表显隐
-                    if (isPlaylistVisible) {
-                        hidePlaylistPanel();
-                    } else {
-                        showPlaylistPanel();
+            if (player == null) return true;
+
+            int action = event.getAction();
+            float x = event.getX();
+            float y = event.getY();
+
+            switch (action) {
+                case android.view.MotionEvent.ACTION_DOWN:
+                    touchDownX = x;
+                    touchDownY = y;
+                    isTouchTap = true;
+                    break;
+
+                case android.view.MotionEvent.ACTION_MOVE:
+                    float dx = Math.abs(x - touchDownX);
+                    float dy = Math.abs(y - touchDownY);
+                    if (dx > TOUCH_SLOP || dy > TOUCH_SLOP) {
+                        isTouchTap = false;
                     }
-                } else {
-                    // 左侧50%（或无播放列表时）：切换功能条显隐
-                    toggleControlsVisibility();
-                }
+                    break;
+
+                case android.view.MotionEvent.ACTION_UP:
+                    if (isTouchTap) {
+                        // 简单点击：沿用原来的左/右半屏逻辑
+                        boolean isRightSide = touchDownX > v.getWidth() * 0.5f;
+                        if (isRightSide && playlistSize > 1) {
+                            // 右侧50%：切换播放列表显隐
+                            if (isPlaylistVisible) {
+                                hidePlaylistPanel();
+                            } else {
+                                showPlaylistPanel();
+                            }
+                        } else {
+                            // 左侧50%（或无播放列表时）：切换功能条显隐
+                            toggleControlsVisibility();
+                        }
+                    } else {
+                        // 滑动手势：根据方向快退/快进
+                        float swipeDx = x - touchDownX;
+                        if (Math.abs(swipeDx) > SWIPE_THRESHOLD) {
+                            if (swipeDx > 0) {
+                                // 向右滑动：快进
+                                seekByMs(SEEK_BY_MS);
+                            } else {
+                                // 向左滑动：快退
+                                seekByMs(-SEEK_BY_MS);
+                            }
+                        }
+                    }
+                    break;
             }
             // 消费触摸事件，使 PlayerView 成为触摸目标，确保收到完整的 DOWN/MOVE/UP 序列。
             // use_controller="false" 已禁用 PlayerView 内置手势，返回 true 不会产生副作用。
@@ -507,6 +546,19 @@ public class MvPlayerActivity extends AppCompatActivity {
         } else {
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
         }
+    }
+
+    // ── 快进/快退 ──
+
+    private void seekByMs(long offsetMs) {
+        if (player == null) return;
+        long current = player.getCurrentPosition();
+        long target = current + offsetMs;
+        long duration = player.getDuration();
+        if (duration > 0) {
+            target = Math.max(0, Math.min(target, duration));
+        }
+        player.seekTo(target);
     }
 
     // ── 画质选择 ──
@@ -689,11 +741,15 @@ public class MvPlayerActivity extends AppCompatActivity {
     }
 
     private void hidePlaylistPanel() {
+        int orientation = getResources().getConfiguration().orientation;
+        if (orientation != Configuration.ORIENTATION_LANDSCAPE && playlistSize > 1) {
+            // 竖屏下播放列表始终可见，不可隐藏
+            return;
+        }
         isPlaylistVisible = false;
         landscapePlaylistDrawer.setVisibility(View.GONE);
         portraitPlaylistPanel.setVisibility(View.GONE);
         // 竖屏恢复信息区
-        int orientation = getResources().getConfiguration().orientation;
         if (orientation != Configuration.ORIENTATION_LANDSCAPE) {
             infoScroll.setVisibility(View.VISIBLE);
         }
@@ -785,11 +841,28 @@ public class MvPlayerActivity extends AppCompatActivity {
     @Override
     public void onConfigurationChanged(@NonNull Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        // 先隐藏面板再重新根据方向显示
-        boolean wasVisible = isPlaylistVisible;
-        hidePlaylistPanel();
+        // 先隐藏所有面板
+        landscapePlaylistDrawer.setVisibility(View.GONE);
+        portraitPlaylistPanel.setVisibility(View.GONE);
+
         applyOrientationLayout(newConfig.orientation);
-        if (wasVisible) showPlaylistPanel();
+
+        // 根据方向重新设置播放列表显隐
+        if (newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+            // 横屏全屏：隐藏播放列表，显示按钮
+            if (playlistSize > 1) {
+                btnPlaylist.setVisibility(View.VISIBLE);
+            }
+            isPlaylistVisible = false;
+        } else {
+            // 竖屏非全屏：始终显示播放列表，隐藏按钮
+            if (playlistSize > 1) {
+                btnPlaylist.setVisibility(View.GONE);
+                infoScroll.setVisibility(View.GONE);
+                portraitPlaylistPanel.setVisibility(View.VISIBLE);
+                isPlaylistVisible = true;
+            }
+        }
     }
 
     private void applyOrientationLayout(int orientation) {
@@ -803,6 +876,13 @@ public class MvPlayerActivity extends AppCompatActivity {
             params.weight = 0;
             videoContainer.setLayoutParams(params);
             btnFullscreen.setImageResource(R.drawable.ic_fullscreen_exit);
+
+            // 横屏全屏：隐藏播放列表抽屉，显示播放列表按钮
+            if (playlistSize > 1) {
+                landscapePlaylistDrawer.setVisibility(View.GONE);
+                btnPlaylist.setVisibility(View.VISIBLE);
+                isPlaylistVisible = false;
+            }
 
             if ("landscape".equals(screenOrientation)) {
                 // 横屏锁定模式：保持系统栏可见，视频缩放到系统栏之间
@@ -884,6 +964,14 @@ public class MvPlayerActivity extends AppCompatActivity {
             }
 
             ViewCompat.setOnApplyWindowInsetsListener(videoContainer, null);
+
+            // 竖屏非全屏：始终显示播放列表，隐藏按钮
+            if (playlistSize > 1) {
+                btnPlaylist.setVisibility(View.GONE);
+                infoScroll.setVisibility(View.GONE);
+                portraitPlaylistPanel.setVisibility(View.VISIBLE);
+                isPlaylistVisible = true;
+            }
         }
     }
 

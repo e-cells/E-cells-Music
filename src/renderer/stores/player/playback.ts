@@ -335,7 +335,7 @@ export const createPlaybackManager = (
     if (hash) {
       state.cacheProgressKey = hash + '_' + (quality || 'default');
     }
-    engine.setSource(resolved.url, { suppressCacheSwitch: options?.isStartupRestore });
+    await engine.setSource(resolved.url, { suppressCacheSwitch: options?.isStartupRestore });
     engine.applyTrackLoudness(resolved.loudness);
     engine.setLoopFile(state.playMode === 'single');
 
@@ -420,7 +420,7 @@ export const createPlaybackManager = (
                 if (freshResolved.loudness) engine.applyTrackLoudness(freshResolved.loudness);
               } else {
                 // 非启动场景：热替换引擎源并 seek 回当前进度
-                engine.setSource(freshResolved.url);
+                await engine.setSource(freshResolved.url);
                 engine.applyTrackLoudness(freshResolved.loudness);
                 const savedTime = state.currentTime;
                 if (savedTime > 0) {

@@ -50,7 +50,7 @@ export const createDeviceManager = (
         const savedUrl = state.currentAudioUrl;
         const savedTime = state.currentTime;
         engine.reset();
-        engine.setSource(savedUrl);
+        await engine.setSource(savedUrl);
         await engine.play();
         if (savedTime > 0) engine.seek(savedTime);
       }

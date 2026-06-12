@@ -1,4 +1,4 @@
-import { Howl } from 'howler';
+import type { Howl } from 'howler';
 import { isGeckoView } from './nativeBridge';
 import NativeAudio from './nativeAudio';
 import { WebAudioEffectEngine } from './webAudioEffectEngine';
@@ -239,7 +239,7 @@ export class PlayerEngine {
     this.events = events;
   }
 
-  setSource(url: string, options?: { suppressCacheSwitch?: boolean }): void {
+  async setSource(url: string, options?: { suppressCacheSwitch?: boolean }): Promise<void> {
     if (!url || this.sourceUrl === url) return;
     this.sourceUrl = url;
     this.durationValue = 0;
@@ -272,9 +272,10 @@ export class PlayerEngine {
         this.events.error?.(evt);
       });
     } else {
-      // Howler fallback
+      // Howler fallback — 动态 import，Android/GeckoView 环境不会下载此 chunk
+      const { Howl: HowlConstructor } = await import('howler');
       this.unloadHowl();
-      this.howl = new Howl({
+      this.howl = new HowlConstructor({
         src: [url],
         html5: true,
         format: ['mp3'],

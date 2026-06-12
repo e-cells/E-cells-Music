@@ -66,7 +66,7 @@ export const usePlayerStore = defineStore(
       state.currentResolvedAudioEffect = resolved.effect;
       track.audioUrl = resolved.url;
       const savedDuration = state.duration;
-      engine.setSource(resolved.url);
+      await engine.setSource(resolved.url);
       if (!state.duration && !engine.duration && savedDuration) state.duration = savedDuration;
       engine.applyTrackLoudness(resolved.loudness);
       engine.setPlaybackRate(state.playbackRate);
@@ -176,7 +176,7 @@ export const usePlayerStore = defineStore(
             state.currentTrackSnapshot?.hash ?? '',
             state.currentResolvedAudioQuality ?? '',
           );
-          engine.setSource(state.currentAudioUrl);
+          await engine.setSource(state.currentAudioUrl);
           void engine.play();
         }
         return;

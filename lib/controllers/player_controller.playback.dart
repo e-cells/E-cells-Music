@@ -224,6 +224,10 @@ mixin _PlayerPlayback on _PlayerControllerBase {
       _consecutivePlayFailures = 0;
       _autoSkippedInStreak = 0;
       _autoSkipStreakSince = null;
+      // 恢复 watchdog 同步收手并归零重播计数：这轮播放已经成功了，
+      // 后续若再失败属于新一轮 streak，预算从零起算。
+      _cancelNetworkRecovery();
+      _networkRecoveryAttempts = 0;
       // 曲末跳过的墙钟预算同步重新起算。它此前只在「自然播完」时清零，而
       // 曲末失败那条路（本预算存在的理由）恰恰不会再走自然播完：一首几分钟
       // 的歌播完后，下一次曲末失败必然被 60s 预算判成「超预算」，于是曲末
@@ -308,6 +312,9 @@ mixin _PlayerPlayback on _PlayerControllerBase {
       isPreparing = false;
       notifyListeners();
       _nextLog('playSong 落错误态: ${song.title} → $error');
+      // 网络/坏源失败都可能走到这里：交给恢复 watchdog 周期探测，
+      // 外网恢复即从断点（或 initialPosition 恢复语境）自动重播一次。
+      _scheduleNetworkRecovery(song, initialPosition ?? Duration.zero);
       // 已走完 VIP 领取与自动重试仍失败：计一次最终失败，达阈值自动前进。
       _registerPlaybackFailure(song);
     } finally {
@@ -430,12 +437,122 @@ mixin _PlayerPlayback on _PlayerControllerBase {
     // 在错误提示出现后仍短暂显示「播放中」。
     isPlaying = false;
     duration = song.duration ?? duration;
+    // 复位展示进度前先保存中断位置：恢复 watchdog 出隧道后从这里续播，
+    // 而不是把整首歌从头再来。
+    _networkRecoveryPosition = errorPosition;
     _setPositionBase(Duration.zero, playing: false);
     _lastSmoothPosition = Duration.zero;
     _emitPosition();
     errorMessage = '播放中断，请稍后重试';
     notifyListeners();
+    _scheduleNetworkRecovery(song, errorPosition);
     _registerPlaybackFailure(song);
+  }
+
+  /// 断网自动恢复 watchdog（车机过隧道场景）。
+  ///
+  /// 症状：进隧道断流 → 引擎错误 → 暂停落错误态；出隧道后音乐不会自动
+  /// 恢复。原因：热点/蜂窝链路在隧道里往往并未断开（connectivity 全程
+  /// mobile/wifi），[NetworkMonitor.onConnectivityRestored] 的"断→通"
+  /// 跃迁不发生；即便发生，也只是从 0 秒重播。这里改为：失败停住后
+  /// 每 [_kNetworkRecoveryProbeInterval] 探测一次外网可达性
+  /// （[NetworkMonitor.probeInternet]，不依赖 connectivity 事件），
+  /// 可达即从断点续播（isRetry，失败会重新武装，次数由
+  /// [_kNetworkRecoveryMaxAttempts] 与墙钟预算双保险限流）。
+  ///
+  /// 自动停手条件（tick 内判定）：用户已接管播放/切歌/错误被清、
+  /// 曲末预算耗尽态（与 connectivity 钩子同等排除）、预算/次数用尽。
+  void _scheduleNetworkRecovery(Song song, Duration position) {
+    if (_disposed || song.source == SongSource.local) return;
+    // 分工：链路真断（connectivity 报 none）时，恢复由
+    // onConnectivityRestored 钩子的"断→通"跃迁负责；watchdog 只兜
+    // "链路在、数据不通"的隧道形态——那时的探测才有信息量，也避免
+    // 确定性坏源在正常网络下被探测成功牵着多播几轮。
+    if (!NetworkMonitor.instance.hasNetwork) return;
+    _networkRecoverySongHash = song.hash;
+    _networkRecoveryPosition = position;
+    _networkRecoverySince ??= DateTime.now();
+    _networkRecoveryTimer?.cancel();
+    _networkRecoveryTimer = Timer.periodic(
+      _kNetworkRecoveryProbeInterval,
+      (_) => unawaited(_probeNetworkRecovery()),
+    );
+    _nextLog(
+      '断网恢复 watchdog 武装: ${song.title} '
+      'pos=${position.inMilliseconds}ms attempts=$_networkRecoveryAttempts',
+    );
+  }
+
+  Future<void> _probeNetworkRecovery() async {
+    if (_disposed) {
+      _cancelNetworkRecovery();
+      return;
+    }
+    // 用户已接管（手动播放/新加载在途/切歌/错误被清）或曲末耗尽态：
+    // 与 connectivity 钩子的排除条件保持一致，立即收手。
+    if (isPlaying ||
+        isPreparing ||
+        _isChangingSource ||
+        _tailSkipExhausted ||
+        errorMessage == null) {
+      _cancelNetworkRecovery();
+      return;
+    }
+    final song = currentSong;
+    if (song == null || song.hash != _networkRecoverySongHash) {
+      _cancelNetworkRecovery();
+      return;
+    }
+    final since = _networkRecoverySince;
+    final overBudget = since != null &&
+        DateTime.now().difference(since) >= _kNetworkRecoveryBudget;
+    if (overBudget || _networkRecoveryAttempts >= _kNetworkRecoveryMaxAttempts) {
+      _nextLog(
+        '断网恢复 watchdog 收手: 预算/次数用尽 '
+        'attempts=$_networkRecoveryAttempts overBudget=$overBudget',
+      );
+      _cancelNetworkRecovery();
+      return;
+    }
+
+    final reachable = await NetworkMonitor.instance.probeInternet();
+    if (_disposed || !reachable) return; // 仍在隧道：下个周期再探
+    // 探测成功后重检状态：探测期间用户可能已操作。
+    if (isPlaying ||
+        isPreparing ||
+        _isChangingSource ||
+        errorMessage == null ||
+        currentSong?.hash != _networkRecoverySongHash) {
+      _cancelNetworkRecovery();
+      return;
+    }
+    final resumeAt = _networkRecoveryPosition;
+    _networkRecoveryAttempts++;
+    _cancelNetworkRecovery();
+    debugPrint(
+      '[易格][player] 外网探测恢复，从断点自动续播: ${song.title} '
+      '@${resumeAt?.inMilliseconds ?? 0}ms '
+      '(attempt $_networkRecoveryAttempts/$_kNetworkRecoveryMaxAttempts)',
+    );
+    _nextLog(
+      '断网恢复 watchdog → 续播: ${song.title} '
+      'pos=${resumeAt?.inMilliseconds ?? 0}ms attempt=$_networkRecoveryAttempts',
+    );
+    unawaited(
+      playSong(
+        song,
+        isRetry: true,
+        initialPosition:
+            resumeAt != null && resumeAt > Duration.zero ? resumeAt : null,
+      ),
+    );
+  }
+
+  /// 停掉恢复 watchdog（保留 song/position 快照与计数，供钩子取断点）。
+  void _cancelNetworkRecovery() {
+    _networkRecoveryTimer?.cancel();
+    _networkRecoveryTimer = null;
+    _networkRecoverySince = null;
   }
 
   /// 曲末自动切歌预算：用独立计数 [_consecutiveNearEndSkips]，避免

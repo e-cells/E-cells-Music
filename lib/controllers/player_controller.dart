@@ -84,6 +84,16 @@ const Duration _kNearEndDecodeErrorThreshold = Duration(milliseconds: 1500);
 const int _kTailStallMaxChecks = 3;
 const Duration _kTailStallRecheckInterval = Duration(milliseconds: 1500);
 
+/// 断网自动恢复 watchdog（见 [_PlayerPlayback._scheduleNetworkRecovery]）：
+/// 车机过隧道时链路常不报告离线，connectivity 跃迁不可依赖，改为
+/// 周期探测外网可达性，恢复后从断点自动续播。
+const Duration _kNetworkRecoveryProbeInterval = Duration(seconds: 5);
+/// 单轮恢复预算：超时停手（最长隧道也就几分钟，10 分钟覆盖极端通勤）。
+const Duration _kNetworkRecoveryBudget = Duration(minutes: 10);
+/// 探测成功后的最大重播尝试次数：确定性失败（坏源/无版权）探测必然
+/// 成功，靠它防止"探测→重播→再失败"无限循环。
+const int _kNetworkRecoveryMaxAttempts = 4;
+
 /// 「起播请求」平台确认的结果（见 [_PlayerControllerBase._requestPlayback]）。
 enum PlayConfirm {
   /// 平台在限时内回执确认。
@@ -203,13 +213,26 @@ class PlayerController extends _PlayerControllerBase
     );
     // 车机切网（WiFi ↔ 蜂窝 ↔ 离线）后恢复网络时，若上一首因断网停在
     // 错误态，自动重播一次；isRetry 防止失败后再次触发形成循环。
+    // 断点优先取 watchdog 保存的中断位置（隧道场景大多没有这条
+    // connectivity 跃迁事件，靠 _scheduleNetworkRecovery 的周期探测兜底）。
     _networkRestoredSub = NetworkMonitor.instance.onConnectivityRestored.listen(
       (_) {
         if (isPreparing || errorMessage == null || _tailSkipExhausted) return;
         final song = currentSong;
         if (song == null) return;
+        final resumeAt = _networkRecoverySongHash == song.hash
+            ? _networkRecoveryPosition
+            : null;
+        _cancelNetworkRecovery();
         debugPrint('[易格][player] 网络已恢复，自动重播: ${song.title}');
-        unawaited(playSong(song, isRetry: true));
+        unawaited(
+          playSong(
+            song,
+            isRetry: true,
+            initialPosition:
+                resumeAt != null && resumeAt > Duration.zero ? resumeAt : null,
+          ),
+        );
       },
     );
     _audioHandler.attachTransportControls(onNext: next, onPrevious: previous);
@@ -403,6 +426,7 @@ class PlayerController extends _PlayerControllerBase
     _flushPendingVolumePersist();
     _flushPendingLyricOffsetPersist();
     _networkRestoredSub?.cancel();
+    _networkRecoveryTimer?.cancel();
     _autoResumeTimer?.cancel();
     _sleepTimer?.cancel();
     _positionSub.cancel();
@@ -422,6 +446,7 @@ class PlayerController extends _PlayerControllerBase
     _desktopLyrics.setLockChangedHandler(null);
     _desktopLyrics.setSettingsChangedHandler(null);
     _desktopLyrics.setOpenSettingsHandler(null);
+    _androidLyric.setLockChangedHandler(null);
     _androidLyricHeartbeat?.cancel();
     _androidLyricHeartbeat = null;
     positionListenable.dispose();
@@ -566,6 +591,14 @@ abstract class _PlayerControllerBase extends ChangeNotifier {
   Duration? _pendingIdlePosition;
   Duration? _pendingInitialPosition;
   bool _disposed = false;
+
+  // 断网自动恢复 watchdog 状态（见 playback 分片 _scheduleNetworkRecovery）：
+  // 播放因网络类失败停住后周期探测外网，恢复即从断点续播。
+  Timer? _networkRecoveryTimer;
+  DateTime? _networkRecoverySince;
+  String? _networkRecoverySongHash;
+  Duration? _networkRecoveryPosition;
+  int _networkRecoveryAttempts = 0;
 
   /// 进行中的歌词拉取（按歌曲 hash 去重），防止进页兜底与并发触发重复请求。
   String? _lyricsFetchInFlightHash;

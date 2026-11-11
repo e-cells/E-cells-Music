@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
@@ -99,6 +100,42 @@ class NetworkMonitor {
   void debugSimulateRestored() {
     if (!_restored.isClosed) _restored.add(null);
   }
+
+  /// 主动探测互联网可达性。
+  ///
+  /// 为什么需要它：车机进隧道时，蜂窝/WiFi 链路往往并未断开（手机热点
+  /// 还连着、调制解调器仍附着），connectivity_plus 全程报告 mobile/wifi，
+  /// [onConnectivityRestored] 的"断→通"跃迁根本不会发生——出隧道后无人
+  /// 通知播放器恢复。这里对酷狗网关发一个极轻量的 HEAD（与 Rust 侧
+  /// DEFAULT_GATEWAY 同源），拿到任意 HTTP 响应（状态码 ≥ 200，含
+  /// 4xx/5xx——它们同样证明了能完成外网往返）即认为外网可达。
+  ///
+  /// 连接复用单例 client；证书宽松放行——探测只关心"能不能完成 HTTP
+  /// 往返"，误判（如门户页）后续真实请求失败会自然回到失败路径，自愈。
+  Future<bool> probeInternet({
+    Duration timeout = const Duration(seconds: 4),
+  }) async {
+    final override = probeOverride;
+    if (override != null) return override(timeout);
+    final client = _probeClient;
+    try {
+      final request = await client
+          .headUrl(Uri.parse('https://gateway.kugou.com'))
+          .timeout(timeout);
+      final response = await request.close().timeout(timeout);
+      return response.statusCode >= 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static final HttpClient _probeClient = HttpClient()
+    ..connectionTimeout = const Duration(seconds: 4)
+    ..badCertificateCallback = (_, _, _) => true;
+
+  /// 测试注入：非空时 [probeInternet] 直接返回其结果，不发真实请求。
+  @visibleForTesting
+  static Future<bool> Function(Duration timeout)? probeOverride;
 
   /// 仅供测试：直接注入连接类型，驱动预缓存等流量门控单测。
   @visibleForTesting

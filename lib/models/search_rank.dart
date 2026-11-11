@@ -1,4 +1,5 @@
 import 'model_parsing.dart';
+import 'playlist.dart';
 import 'song.dart';
 
 class SearchHotKeyword {
@@ -112,6 +113,77 @@ class SearchAlbumResult {
             asString(json['img']),
       ),
       songCount: asInt(json['songcount'] ?? json['song_count']) ?? 0,
+    );
+  }
+}
+
+/// 歌单搜索结果（`/search?type=special` 的 `SearchPlaylistItem`）。
+///
+/// 契约来源 api.json 与 complexsearch.kugou.com `/v1/search/special` 实测：
+/// `gid`（歌单全局 ID，详情/曲目加载的唯一可用 ID）、`specialid`（本地 ID）、
+/// `specialname`、`song_count`、`nickname`（创建者）、`play_count` /
+/// `total_play_count`（字符串数字）、`img`（完整 URL，可带 {size} 占位）。
+class SearchPlaylistResult {
+  const SearchPlaylistResult({
+    required this.gid,
+    required this.name,
+    this.specialId = '',
+    this.coverUrl,
+    this.songCount = 0,
+    this.creatorName = '',
+    this.playCount = 0,
+    this.publishTime,
+  });
+
+  /// 歌单全局 ID（`collection_...` 形态）：[PlaylistSummary.id] 与
+  /// 歌单详情/曲目接口（global_collection_id）都只认它。为空的条目
+  /// 打不开详情，调用方直接过滤。
+  final String gid;
+
+  final String name;
+  final String specialId;
+  final String? coverUrl;
+  final int songCount;
+  final String creatorName;
+  final int playCount;
+  final String? publishTime;
+
+  factory SearchPlaylistResult.fromJson(Map<String, dynamic> json) {
+    return SearchPlaylistResult(
+      gid: asString(json['gid']) ?? '',
+      name:
+          asString(json['specialname']) ?? asString(json['name']) ?? '未知歌单',
+      specialId: asString(json['specialid']) ?? '',
+      coverUrl: normalizeImageUrl(
+        asString(json['img']) ??
+            asString(json['flexible_cover']) ??
+            asString(json['cover']),
+      ),
+      songCount: asInt(json['song_count'] ?? json['count']) ?? 0,
+      creatorName:
+          asString(json['nickname']) ?? asString(json['user_name']) ?? '',
+      // 实测 total_play_count/play_count 都是字符串数字；asInt 都能接。
+      playCount:
+          asInt(json['total_play_count'] ?? json['play_count'] ?? json['heat']) ??
+          0,
+      publishTime: asString(json['publish_time']),
+    );
+  }
+
+  /// 转为可打开 [PlaylistDetailPage] 的歌单摘要。
+  ///
+  /// 与 `PlaylistSummary.fromRecommend` 同构：`sourceGlobalId` 必须带上 gid，
+  /// 否则 [PlaylistSummary.isCollectedAlbum] 会把它误判成收藏专辑，
+  /// 详情页走专辑加载分支导致曲目恒为空。
+  PlaylistSummary toPlaylistSummary() {
+    return PlaylistSummary(
+      id: gid,
+      title: name,
+      subtitle: creatorName.isNotEmpty ? creatorName : null,
+      coverUrl: coverUrl,
+      songCount: songCount,
+      playCount: playCount,
+      sourceGlobalId: gid,
     );
   }
 }

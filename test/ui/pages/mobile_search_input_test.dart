@@ -74,7 +74,7 @@ void main() {
     expect(iconFinder, findsOneWidget);
     final iconRect = tester.getRect(iconFinder);
 
-    final hintFinder = find.text('搜索歌曲、歌手、专辑');
+    final hintFinder = find.text('搜索歌曲、歌手、专辑、歌单');
     expect(hintFinder, findsOneWidget);
     final hintRect = tester.getRect(hintFinder);
 
@@ -141,7 +141,7 @@ void main() {
     await tester.tap(closeBtnFinder);
     await tester.pumpAndSettle();
     expect(find.byIcon(Icons.close_rounded), findsNothing);
-    expect(find.text('搜索歌曲、歌手、专辑'), findsOneWidget);
+    expect(find.text('搜索歌曲、歌手、专辑、歌单'), findsOneWidget);
 
     // 4. 输入长文字测试
     await tester.enterText(textFieldFinder, '这是一段非常长非常长的搜索测试文字用于验证字体底部不被截断gyjp');

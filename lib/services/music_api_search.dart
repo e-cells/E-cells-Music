@@ -160,6 +160,42 @@ mixin _MusicApiSearch on _MusicApiBase, _MusicApiArtist {
         .toList();
   }
 
+  /// 搜索酷狗歌单（`/search?type=special`）。
+  ///
+  /// 酷狗的"歌单"在搜索侧叫 special；Rust 层按参考实现补
+  /// albumhide/nocollect 参数。响应经 transport 提升 data 后是
+  /// `{lists: [...]}`，条目形状见 [SearchPlaylistResult]。
+  Future<List<SearchPlaylistResult>> searchPlaylists(
+    String keywords, {
+    int page = 1,
+    int pageSize = 30,
+  }) async {
+    final raw = await _client.get('/search', {
+      'keywords': keywords,
+      'page': page,
+      'pagesize': pageSize,
+      'type': 'special',
+    });
+    final List items;
+    if (raw is List) {
+      items = raw;
+    } else {
+      final json = asMap(raw);
+      items = asList(
+        json['lists'] ??
+            json['special_list'] ??
+            json['list'] ??
+            asMap(json['data'])['lists'],
+      );
+    }
+    return items
+        .whereType<Map<String, dynamic>>()
+        .map(SearchPlaylistResult.fromJson)
+        // 无 gid 的条目（系统/下架歌单）没有可用的详情 ID，直接过滤。
+        .where((p) => p.gid.isNotEmpty)
+        .toList();
+  }
+
   /// 搜索网易云歌曲。
   ///
   /// 使用独立的网易云 API（`wyy.music.api.hoilai.cn`）：

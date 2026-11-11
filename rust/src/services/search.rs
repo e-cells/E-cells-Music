@@ -27,9 +27,18 @@ pub async fn search_raw(
     .param("page", page.to_string())
     .param("pagesize", pagesize.to_string())
     .param("platform", "AndroidFilter")
-    .param("iscorrection", "1")
-    .router("complexsearch.kugou.com")
-    .signature_type(SignatureType::Default);
+    .param("iscorrection", "1");
+    // 对齐 KuGouMusicApi 参考实现（module/search.js 的通用分支）：
+    // song/album 之外的类型（special 歌单/lyric/author/mv）额外带
+    // albumhide=0、nocollect=0，缺参时 complexsearch 会拒答或返回空。
+    let req = if search_type != "song" && search_type != "album" {
+        req.param("albumhide", "0").param("nocollect", "0")
+    } else {
+        req
+    };
+    let req = req
+        .router("complexsearch.kugou.com")
+        .signature_type(SignatureType::Default);
 
     transport::send(client, session, &req).await
 }

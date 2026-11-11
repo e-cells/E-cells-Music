@@ -1,12 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 桌面歌词悬浮窗布局：移植自易格音乐（layout_floating_lyric.xml）。
-     两行跑马灯 TextView，无任何按钮/图标/手柄——锁定、关闭、宽度
-     全部由设置页操作。对齐方式由服务动态改 lyric_text_container 的
-     gravity（左/中/右）。 -->
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+     两行跑马灯 TextView；未锁定时在歌词条下方展示微调按钮行
+     （← ↑ 锁定 ↓ →），锁定后按钮行隐藏且完全穿透——锁定、关闭、
+     宽度等其余设置仍由设置页操作。对齐方式由服务动态改
+     lyric_text_container 的 gravity（左/中/右）。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/lyric_root"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:orientation="vertical"
     android:background="@drawable/bg_floating_lyric"
     android:paddingStart="4dp"
     android:paddingEnd="8dp"
@@ -50,4 +52,68 @@
 
     </LinearLayout>
 
-</FrameLayout>
+    <!-- 微调按钮行：仅未锁定时可见（服务控制 visibility）。
+         一行五键：← ↑ 锁定 ↓ →，锁定键居中。 -->
+    <LinearLayout
+        android:id="@+id/lyric_control_bar"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="4dp"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <ImageButton
+            android:id="@+id/lyric_btn_nudge_left"
+            android:layout_width="40dp"
+            android:layout_height="32dp"
+            android:layout_marginStart="4dp"
+            android:background="@drawable/bg_lyric_control_btn"
+            android:src="@drawable/ic_lyric_nudge_left"
+            android:scaleType="centerInside"
+            android:contentDescription="左移" />
+
+        <ImageButton
+            android:id="@+id/lyric_btn_nudge_up"
+            android:layout_width="40dp"
+            android:layout_height="32dp"
+            android:layout_marginStart="6dp"
+            android:background="@drawable/bg_lyric_control_btn"
+            android:src="@drawable/ic_lyric_nudge_up"
+            android:scaleType="centerInside"
+            android:contentDescription="上移" />
+
+        <ImageButton
+            android:id="@+id/lyric_btn_lock"
+            android:layout_width="40dp"
+            android:layout_height="32dp"
+            android:layout_marginStart="6dp"
+            android:background="@drawable/bg_lyric_control_btn"
+            android:src="@drawable/ic_lyric_lock"
+            android:scaleType="centerInside"
+            android:contentDescription="锁定歌词" />
+
+        <ImageButton
+            android:id="@+id/lyric_btn_nudge_down"
+            android:layout_width="40dp"
+            android:layout_height="32dp"
+            android:layout_marginStart="6dp"
+            android:background="@drawable/bg_lyric_control_btn"
+            android:src="@drawable/ic_lyric_nudge_down"
+            android:scaleType="centerInside"
+            android:contentDescription="下移" />
+
+        <ImageButton
+            android:id="@+id/lyric_btn_nudge_right"
+            android:layout_width="40dp"
+            android:layout_height="32dp"
+            android:layout_marginStart="6dp"
+            android:layout_marginEnd="4dp"
+            android:background="@drawable/bg_lyric_control_btn"
+            android:src="@drawable/ic_lyric_nudge_right"
+            android:scaleType="centerInside"
+            android:contentDescription="右移" />
+
+    </LinearLayout>
+
+</LinearLayout>

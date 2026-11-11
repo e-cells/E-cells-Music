@@ -33,7 +33,6 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -89,6 +88,14 @@ class LyricsOverlayService : Service() {
 
         val instance: LyricsOverlayService?
             get() = instanceRef?.get()
+
+        /**
+         * 锁定状态经悬浮窗「锁定」按钮变更时回推 Flutter 的回调
+         * （MainActivity 在配置引擎时注入）。同进程直调，无序列化开销；
+         * 服务重建不丢线（挂在 companion 上）。
+         */
+        @Volatile
+        var lockChangedListener: ((Boolean) -> Unit)? = null
     }
 
     /** 原生歌词行数据（Flutter 侧 JSON 解析产物）。 */
@@ -99,6 +106,7 @@ class LyricsOverlayService : Service() {
     private var overlayView: View? = null
     private var line1: TextView? = null
     private var line2: TextView? = null
+    private var controlBar: View? = null
     private var params: WindowManager.LayoutParams? = null
     private val handler = Handler(Looper.getMainLooper())
 
@@ -321,6 +329,8 @@ class LyricsOverlayService : Service() {
         overlayView = LayoutInflater.from(this).inflate(R.layout.layout_floating_lyric, null)
         line1 = overlayView?.findViewById(R.id.lyric_line1)
         line2 = overlayView?.findViewById(R.id.lyric_line2)
+        controlBar = overlayView?.findViewById(R.id.lyric_control_bar)
+        wireControlButtons()
 
         // 跑马灯：无焦点窗口里 TextView 需要选中态才会滚动。
         line1?.isSelected = true
@@ -361,15 +371,16 @@ class LyricsOverlayService : Service() {
             }
         }
 
-        (overlayView as? FrameLayout)?.setOnTouchListener(dragListener)
+        overlayView?.setOnTouchListener(dragListener)
 
+        // 锁定态：穿透 + 透明 + 隐藏微调按钮（addView 前应用，flags 直接
+        // 落在 params 上；updateViewLayout 未挂载时报错被 runCatching 吞掉）。
         if (isLocked) {
-            (overlayView as? FrameLayout)?.setOnTouchListener(null)
-            params?.flags =
-                (params?.flags ?: 0) or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            applyLockToViews()
+        } else {
+            updateControlBarVisibility()
+            updateLyricBackground()
         }
-
-        updateLyricBackground()
 
         try {
             windowManager?.addView(overlayView, params)
@@ -378,6 +389,7 @@ class LyricsOverlayService : Service() {
             overlayView = null
             line1 = null
             line2 = null
+            controlBar = null
             params = null
             return
         }
@@ -398,6 +410,7 @@ class LyricsOverlayService : Service() {
         overlayView = null
         line1 = null
         line2 = null
+        controlBar = null
         isVisible = false
         stopNativeLyricTimer()
         prefs.edit().putBoolean("enabled", false).apply()
@@ -684,9 +697,7 @@ class LyricsOverlayService : Service() {
             line2?.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize)
             line2?.visibility = if (doubleLine) View.VISIBLE else View.GONE
             if (lockChanged) {
-                (overlayView as? FrameLayout)?.setOnTouchListener(if (isLocked) null else dragListener)
-                updateTouchableFlag()
-                updateLyricBackground()
+                applyLockToViews()
             }
             if (widthChanged) {
                 params?.let { lp ->
@@ -930,12 +941,69 @@ class LyricsOverlayService : Service() {
     // ── 外观细节 ──
 
     private fun updateLyricBackground() {
-        val root = overlayView as? FrameLayout ?: return
+        val root = overlayView ?: return
         if (isLocked) {
             root.setBackgroundColor(Color.TRANSPARENT)
         } else {
             root.setBackgroundResource(R.drawable.bg_floating_lyric)
         }
+    }
+
+    // ── 悬浮窗微调按钮行（未锁定时可见）──
+
+    /** 微调步进：5dp/次。拖动是粗定位，按钮是车机上更稳的细定位。 */
+    private val nudgeStepPx: Int
+        get() = TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP, 5f, resources.displayMetrics
+        ).toInt()
+
+    private fun wireControlButtons() {
+        val root = overlayView ?: return
+        root.findViewById<View>(R.id.lyric_btn_nudge_left)
+            ?.setOnClickListener { nudgeOverlay(-nudgeStepPx, 0) }
+        root.findViewById<View>(R.id.lyric_btn_nudge_right)
+            ?.setOnClickListener { nudgeOverlay(nudgeStepPx, 0) }
+        root.findViewById<View>(R.id.lyric_btn_nudge_up)
+            ?.setOnClickListener { nudgeOverlay(0, -nudgeStepPx) }
+        root.findViewById<View>(R.id.lyric_btn_nudge_down)
+            ?.setOnClickListener { nudgeOverlay(0, nudgeStepPx) }
+        root.findViewById<View>(R.id.lyric_btn_lock)
+            ?.setOnClickListener { lockFromControlBar() }
+    }
+
+    /** 按微调步进移动悬浮窗并持久化位置（与拖拽落点同一份 pos_x/pos_y）。 */
+    private fun nudgeOverlay(dx: Int, dy: Int) {
+        val view = overlayView ?: return
+        val lp = params ?: return
+        lp.x += dx
+        lp.y += dy
+        clampToScreen(lp)
+        runCatching { windowManager?.updateViewLayout(view, lp) }
+        prefs.edit().putInt("pos_x", lp.x).putInt("pos_y", lp.y).apply()
+    }
+
+    /** 悬浮窗「锁定」按钮：语义与设置页锁定开关一致，另回推 Flutter
+     *  同步设置页开关状态（解锁入口仍在设置页）。 */
+    private fun lockFromControlBar() {
+        if (isLocked) return
+        isLocked = true
+        prefs.edit().putBoolean("is_locked", true).apply()
+        applyLockToViews()
+        Log.i(TAG, "Locked from floating control bar")
+        lockChangedListener?.invoke(true)
+    }
+
+    /** 把当前锁定态落到窗口：触摸穿透、透明背景、微调按钮行显隐。 */
+    private fun applyLockToViews() {
+        val root = overlayView ?: return
+        root.setOnTouchListener(if (isLocked) null else dragListener)
+        updateTouchableFlag()
+        updateLyricBackground()
+        updateControlBarVisibility()
+    }
+
+    private fun updateControlBarVisibility() {
+        controlBar?.visibility = if (isLocked) View.GONE else View.VISIBLE
     }
 
     private fun updateTouchableFlag() {

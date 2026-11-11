@@ -515,6 +515,17 @@ mixin _PlayerDesktop on _PlayerControllerBase {
       await updateDesktopLyricsSettings(settings);
     });
     _desktopLyrics.setOpenSettingsHandler(_handleDesktopLyricsOpenSettings);
+    // Android 悬浮窗「锁定」按钮：原生已先应用锁定（穿透/透明/隐藏微调
+    // 行），这里同步 Dart 状态与持久化，设置页开关随动；随后
+    // updateSettings 回推原生时 applySettings 的变更守卫会跳过，不回环。
+    _androidLyric.setLockChangedHandler(_handleAndroidLyricLockChanged);
+  }
+
+  /// Android 悬浮窗锁定按钮触发的锁定变更（原生 → Dart 单向通知）。
+  void _handleAndroidLyricLockChanged(bool locked) {
+    if (_disposed) return;
+    if (androidLyricSettings.locked == locked) return;
+    unawaited(setAndroidLyricLocked(locked));
   }
 
   void _handleDesktopLyricsOpenSettings() {

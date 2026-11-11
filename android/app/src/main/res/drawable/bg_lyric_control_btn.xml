@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 悬浮窗微调按钮底：半透明深色圆角胶囊，浅/深主题下都可见，
+     与 bg_floating_lyric 的 70% 黑同一语言（透明度略低以弱化存在感）。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#66000000" />
+    <corners android:radius="10dp" />
+</shape>

@@ -395,4 +395,18 @@ class AndroidLyricService {
       // ignore
     }
   }
+
+  /// 注册原生侧事件回调（原生 → Dart）。
+  ///
+  /// 目前唯一事件是 `onLockChanged`：用户点了悬浮窗微调行的「锁定」按钮，
+  /// 原生已先应用锁定（穿透/透明/隐藏按钮），这里回推 Dart 同步设置状态。
+  /// 传 null 注销回调。
+  void setLockChangedHandler(void Function(bool locked)? handler) {
+    _channel.setMethodCallHandler((call) async {
+      if (call.method == 'onLockChanged') {
+        final args = call.arguments;
+        handler?.call(args is Map && args['locked'] == true);
+      }
+    });
+  }
 }

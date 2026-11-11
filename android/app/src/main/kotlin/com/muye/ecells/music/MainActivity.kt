@@ -480,6 +480,18 @@ class MainActivity : AudioServiceActivity() {
                 }
             }
 
+        // 悬浮窗「锁定」按钮：锁定状态经服务回推 Flutter，同步设置页开关。
+        // 挂在 companion 上，服务重建不丢线；回调统一切主线程（MethodChannel
+        // 要求主线程调用）。
+        LyricsOverlayService.lockChangedListener = { locked ->
+            mainHandler.post {
+                desktopLyricsChannel?.invokeMethod(
+                    "onLockChanged",
+                    mapOf("locked" to locked)
+                )
+            }
+        }
+
         // SuperLyric 系统歌词发布（Xposed）
         superLyricChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,

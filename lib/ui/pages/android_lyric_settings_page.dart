@@ -260,7 +260,8 @@ class _AndroidLyricSettingsPageState extends State<AndroidLyricSettingsPage> {
               icon: Icons.lock_rounded,
               iconColor: colorScheme.primary,
               title: '锁定歌词',
-              subtitle: '锁定后完全穿透点击且背景透明，无法拖动；解锁或关闭请回本页操作',
+              subtitle: '锁定后完全穿透点击且背景透明，无法拖动，悬浮窗微调按钮也会隐藏；'
+                  '可在悬浮窗上点锁定按钮，解锁或关闭请回本页操作',
               value: _settings.locked,
               onChanged: (v) => _update((s) => s.copyWith(locked: v)),
             ),

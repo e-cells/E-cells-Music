@@ -36,6 +36,33 @@ void main() {
     });
   });
 
+  group('buildStorageDocUri（Android 打开所在目录的 content URI 回退）', () {
+    test('内部存储路径映射为 primary 卷', () {
+      expect(
+        buildStorageDocUri('/storage/emulated/0/Music/易格'),
+        'content://com.android.externalstorage.documents/document/'
+            'primary:Music/易格',
+      );
+      expect(
+        buildStorageDocUri('/storage/emulated/0/'),
+        'content://com.android.externalstorage.documents/document/primary:',
+      );
+    });
+
+    test('外置卷（SD/USB，自定义下载位置常见落点）映射为卷 ID', () {
+      expect(
+        buildStorageDocUri('/storage/0000-0000/我的音乐'),
+        'content://com.android.externalstorage.documents/document/'
+            '0000-0000:我的音乐',
+      );
+      expect(
+        buildStorageDocUri('/storage/AB12-CD34/Music/sub dir'),
+        'content://com.android.externalstorage.documents/document/'
+            'AB12-CD34:Music/sub dir',
+      );
+    });
+  });
+
 
   group('自定义下载目录 override', () {
     test('未设置时 customDownloadDirOverride 返回 null', () async {

@@ -618,10 +618,9 @@ Future<void> _openContainingFolder(
       // （路径含空格/中文必须编码，直接拼接会让 URI 解析截断）。
       final uri = Uri.file(dir);
       if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-        // 回退：尝试 content URI 方式
-        final contentUri = Uri.parse(
-          'content://com.android.externalstorage.documents/document/primary:${dir.replaceFirst('/storage/emulated/0/', '')}',
-        );
+        // 回退：尝试 content URI 方式（自定义下载位置可能在 SD/USB 盘，
+        // 卷 ID 不同于内部存储的 primary，见 [buildStorageDocUri]）。
+        final contentUri = Uri.parse(buildStorageDocUri(dir));
         await launchUrl(contentUri, mode: LaunchMode.externalApplication);
       }
     } else {
@@ -632,6 +631,27 @@ Future<void> _openContainingFolder(
     debugPrint('[已下载] 打开所在目录失败: $e');
     Toast.error('打开目录失败，请手动前往：$dir');
   }
+}
+
+/// 构造 externalstorage documents 的 content URI（打开所在目录的回退
+/// 方案，纯函数供单测）。
+///
+/// - 内部存储 `/storage/emulated/0/Music` → `primary:Music`；
+/// - 外置卷（SD/USB，自定义下载位置的常见落点）`/storage/0000-0000/Music`
+///   → `0000-0000:Music`；
+/// - 其他前缀（App 专属目录等）按原样剥 `/storage/` 前缀拼 primary 兜底。
+@visibleForTesting
+String buildStorageDocUri(String dir) {
+  final volume = RegExp(
+    r'^/storage/([0-9A-Za-z]{4}-[0-9A-Za-z]{4})/(.*)$',
+  ).firstMatch(dir);
+  if (volume != null) {
+    return 'content://com.android.externalstorage.documents/document/'
+        '${volume.group(1)}:${volume.group(2)}';
+  }
+  final relative = dir.replaceFirst('/storage/emulated/0/', '');
+  return 'content://com.android.externalstorage.documents/document/'
+      'primary:$relative';
 }
 
 /// 构造 PowerShell 侧「原样传递 explorer /select,"路径"」的命令片段。

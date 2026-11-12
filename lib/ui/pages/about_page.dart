@@ -124,6 +124,40 @@ class _AboutPageState extends State<AboutPage> {
               ),
             ),
           ),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(22, 0, 22, 8),
+              child: _InfoSection(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.volunteer_activism_rounded,
+                          size: 20,
+                          color: colorScheme.primary,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            '本软件完全开源免费，如果您是从淘宝、咸鱼等平台'
+                            '购买的，请直接给店铺差评，谢谢！',
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(
+                              color: colorScheme.onSurfaceVariant,
+                              height: 1.45,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
           const SliverToBoxAdapter(child: SizedBox(height: 32)),
         ],
       ),

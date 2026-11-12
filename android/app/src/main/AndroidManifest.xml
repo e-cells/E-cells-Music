@@ -9,6 +9,19 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <!-- 自定义下载路径（设置-下载位置）写公共目录（含 SD/USB 盘）：
+         API≤29 走 WRITE 运行时权限（配合 application 的
+         requestLegacyExternalStorage，Android 10 也可裸写路径）；
+         API30+ 分区存储下裸写必 EACCES，须由用户在系统设置授予
+         MANAGE_EXTERNAL_STORAGE「所有文件访问」。本应用经 GitHub
+         直发 APK、不上架 Play，无 All-Files-Access 政策审核问题。
+         未自定义下载位置时不申请，默认仍落 App 专属目录。 -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
     <!-- Android 13+ 通知权限声明（媒体通知本身豁免，但桌面歌词 FGS 的
          常驻通知在未授权时不可见）。运行时请求尚未接入，待产品决策。 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -23,6 +36,7 @@
             android:name=".MusicApplication"
             android:allowBackup="false"
             android:usesCleartextTraffic="true"
+            android:requestLegacyExternalStorage="true"
             android:icon="@mipmap/ic_launcher">
         <!-- 渲染引擎由 gradle flavor 决定（见 build.gradle.kts productFlavors）：
              skia 变体 → false（Skia，老 GPU 稳定），impeller 变体 → true

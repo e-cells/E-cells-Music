@@ -73,14 +73,18 @@ class MainActivity : AudioServiceActivity() {
     // 让解码循环立即结束,避免旧歌曲分析空跑占 CPU。
     @Volatile private var loudnessAnalysisCancelled: Boolean = false
     private var pendingPermissionResult: MethodChannel.Result? = null
+    // 自定义下载路径（storage_access channel）的运行时写权限请求结果。
+    private var pendingWritePermissionResult: MethodChannel.Result? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
     companion object {
         private const val REQUEST_READ_AUDIO = 1001
+        private const val REQUEST_WRITE_STORAGE = 1002
         private const val TAG_SUPER_LYRIC = "SuperLyricPublisher"
         private const val TAG_BLUETOOTH_LYRICS = "BluetoothLyrics"
         private const val TAG_LYRICS_OVERLAY = "LyricsOverlay"
         private const val TAG_VOICE_SEARCH = "VoiceSearch"
+        private const val TAG_STORAGE_ACCESS = "StorageAccess"
     }
 
     private val downloadReceiver = object : BroadcastReceiver() {
@@ -343,6 +347,57 @@ class MainActivity : AudioServiceActivity() {
                             result.success(lyrics)
                         }.onFailure { error ->
                             result.error("lyrics_failed", error.message, null)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
+        // 自定义下载路径的公共目录写权限桥（设置-下载位置）：
+        // API≤29 用 WRITE_EXTERNAL_STORAGE 运行时弹窗（配 manifest 的
+        // requestLegacyExternalStorage，Android 10 也可裸写路径）；
+        // API30+ 分区存储下改为用户在系统设置授予「所有文件访问」
+        // （MANAGE_EXTERNAL_STORAGE），跳转后 Dart 侧经 onResume 重查。
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "shiyin_music/storage_access")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "hasWritePermission" -> {
+                        result.success(hasWriteStoragePermission())
+                    }
+                    "requestWritePermission" -> {
+                        if (hasWriteStoragePermission()) {
+                            result.success(true)
+                        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                            // 已授权直接放行；否则跳「所有文件访问」设置页，
+                            // 本调用不回布尔值（null=已跳转，回来后重查）。
+                            try {
+                                val intent = Intent(
+                                    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                                    Uri.parse("package:$packageName")
+                                )
+                                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                startActivity(intent)
+                                result.success(null)
+                            } catch (error: Exception) {
+                                // 个别 ROM 精简了该 Activity：兜底到通用
+                                // 「所有文件访问」列表页。
+                                runCatching {
+                                    val fallback = Intent(
+                                        Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION
+                                    )
+                                    fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    startActivity(fallback)
+                                }
+                                Log.w(TAG_STORAGE_ACCESS, "跳转所有文件访问设置失败: ${error.message}")
+                                result.success(null)
+                            }
+                        } else {
+                            pendingWritePermissionResult = result
+                            ActivityCompat.requestPermissions(
+                                this,
+                                arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
+                                REQUEST_WRITE_STORAGE
+                            )
                         }
                     }
                     else -> result.notImplemented()
@@ -789,6 +844,20 @@ class MainActivity : AudioServiceActivity() {
         )
     }
 
+    /// 自定义下载路径的公共目录写权限是否已具备：
+    /// API30+ = 「所有文件访问」已授予；API≤29 = WRITE_EXTERNAL_STORAGE
+    /// 已授予（Android 10 需配 manifest 的 requestLegacyExternalStorage）。
+    private fun hasWriteStoragePermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            ) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<out String>,
@@ -800,6 +869,12 @@ class MainActivity : AudioServiceActivity() {
                     grantResults[0] == PackageManager.PERMISSION_GRANTED
             pendingPermissionResult?.success(granted)
             pendingPermissionResult = null
+        }
+        if (requestCode == REQUEST_WRITE_STORAGE) {
+            val granted = grantResults.isNotEmpty() &&
+                    grantResults[0] == PackageManager.PERMISSION_GRANTED
+            pendingWritePermissionResult?.success(granted)
+            pendingWritePermissionResult = null
         }
         AudioCaptureHandler.onRequestPermissionsResult(requestCode, grantResults)
     }

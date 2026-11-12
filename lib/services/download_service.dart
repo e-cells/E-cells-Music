@@ -46,13 +46,15 @@ class _PendingTask {
 class DownloadService {
   DownloadService();
 
-  /// 用户自定义下载目录的 prefs 键（PC 设置页「下载位置」写入）。
+  /// 用户自定义下载目录的 prefs 键（设置页「下载位置」写入：桌面在
+  /// 「桌面」分节，Android 在「缓存」分节）。
   ///
   /// 空 / 未设置 = 跟随系统默认（桌面为系统「下载」目录下的
-  /// [AppConfig.downloadDirName] 子目录）。只影响之后的新下载；
-  /// 已有条目的索引是绝对路径，文件留在原处仍可播可删；换目录前的
-  /// 旧自定义目录会记入 [downloadDirOverrideHistoryKey]，下次对账
-  /// 按「以文件为准」语义搬入新目录（见 [legacyDownloadDirs]）。
+  /// [AppConfig.downloadDirName] 子目录；Android 为 App 专属外部目录）。
+  /// 只影响之后的新下载；已有条目的索引是绝对路径，文件留在原处仍可
+  /// 播可删；换目录前的旧自定义目录会记入 [downloadDirOverrideHistoryKey]，
+  /// 桌面端下次对账按「以文件为准」语义搬入新目录（Android 不搬移，
+  /// 见 [legacyDownloadDirs]）。
   static const String downloadDirOverrideKey = 'download_dir_override';
 
   /// 历史自定义下载目录的 prefs 键（StringList，最多保留
@@ -172,18 +174,31 @@ class DownloadService {
 
   /// 持久下载目录。
   ///
-  /// - Android：App 专属外部目录（`Android/data/<包名>/files/shiyin_downloads`），
+  /// - 用户自定义下载位置（设置页「下载位置」，桌面与 Android 通用）优先：
+  ///   - 桌面（Windows/Linux/macOS）：系统"下载"目录之外任选文件夹；
+  ///   - Android：选公共目录（含 SD/USB 盘）需存储权限（API 30+ 为
+  ///     「所有文件访问」，见 StorageAccessService），设置入口负责
+  ///     先取得权限再落盘；目录失效（U 盘拔出）时 _ensureDir 抛错，
+  ///     由调用方转用户可读提示，对账侧有「下载根不可用时保留全部
+  ///     条目」兜底，重插后自动恢复。
+  /// - Android 默认：App 专属外部目录（`Android/data/<包名>/files/shiyin_downloads`），
   ///   无需存储权限，卸载自动清理，不被系统相册/音乐扫描。
-  ///   API29+ 分区存储下公共 Download 裸写必 EACCES，故不再使用公共目录。
+  ///   API29+ 分区存储下公共 Download 裸写必 EACCES，故不使用公共目录。
   ///   存量用户旧索引仍是公共目录绝对路径，文件本身还在就继续可播可删；
   ///   新下载落新目录，目录大小统计口径随之切换（一次性显示回落，属预期）。
-  /// - 桌面端（Windows/Linux/macOS）：系统"下载"目录（path_provider 的
+  /// - 桌面端默认（Windows/Linux/macOS）：系统"下载"目录（path_provider 的
   ///   getDownloadsDirectory：Windows 是 shell Downloads 已知目录，Linux 是
   ///   XDG Downloads）——与"歌曲已保存到下载目录"的通知文案、更新包
   ///   落点（app_update_service 同用 Downloads）保持一致；
-  ///   用户在设置页设置了自定义「下载位置」时优先使用所选目录；
   /// - 其他平台（iOS 等）或获取失败时回退到应用文档目录。
   Future<Directory> downloadDir() async {
+    // 自定义下载位置优先于一切平台默认（Android 同样生效；iOS 无设置
+    // 入口写入，值恒为空）。目录失效（卷未挂载、U 盘拔出、共享盘断开）
+    // 时 _ensureDir 抛错，由调用方转为用户可读的下载失败提示。
+    final custom = await customDownloadDirOverride();
+    if (custom != null) {
+      return _ensureDir(Directory(custom));
+    }
     if (Platform.isAndroid) {
       try {
         final external = await getExternalStorageDirectory();
@@ -201,13 +216,6 @@ class DownloadService {
       );
     }
     if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-      // 用户自定义下载位置（PC 设置-桌面-下载位置）优先于系统 Downloads。
-      // 目录失效（卷未挂载、共享盘断开）时 _ensureDir 抛错，由调用方转
-      // 用户可读提示；对账侧已有「下载根不可用时保留全部条目」兜底。
-      final custom = await customDownloadDirOverride();
-      if (custom != null) {
-        return _ensureDir(Directory(custom));
-      }
       final downloadsDir = await getDownloadsDirectory();
       if (downloadsDir != null) {
         final dir =
@@ -242,8 +250,10 @@ class DownloadService {
   ///   （415b76a 前 Windows/macOS 的下载落点；改名迁移只重写了索引
   ///   字符串时文件仍留在 ka_music 目录）
   /// - `<系统下载目录>/ka_music_downloads`（改名前的 Linux 落点）
-  /// 移动端返回空列表：Android 的存量旧路径（公共 Download）按既有
-  /// 决策保持原地可用，不参与搬移。
+  /// 移动端返回空列表：Android 的存量旧路径（公共 Download、换下来的
+  /// 自定义目录）按既有决策保持原地可用，不参与搬移——索引是绝对路径
+  /// 仍可播可删；跨卷自动搬整库（如内部存储 ↔ U 盘）对车机场景既慢又
+  /// 可能占满目标盘，不做。桌面端历史自定义目录仍参与对账搬移。
   Future<List<Directory>> legacyDownloadDirs() async {
     if (!Platform.isWindows && !Platform.isLinux && !Platform.isMacOS) {
       return const [];

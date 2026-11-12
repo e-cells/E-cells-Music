@@ -48,4 +48,35 @@ class StorageAccessService {
       return false;
     }
   }
+
+  /// 用系统文件管理器打开共享存储目录（已下载-打开文件夹）。
+  ///
+  /// 原生侧以 ACTION_VIEW + `vnd.android.document/directory` 拉起声明
+  /// 可处理目录 content URI 的文件管理器（DocumentsUI「文件」、Files by
+  /// Google、各家 OEM 与第三方管理器普遍按此口径声明）。必须走原生：
+  /// url_launcher 发 Intent 不能携带 MIME 类型——file:// 目录 URI 现代
+  /// 系统无人响应且 targetSdk 24+ 还有 FileUriExposed 风险，无 MIME 的
+  /// content URI 同样无人认领。
+  ///
+  /// 返回值（null = channel 不可用，非 Android 环境按调用方兜底）：
+  /// - `opened`：已拉起文件管理器；
+  /// - `app_private`：目录在 `Android/data|obb` 下且 API 30+，分区存储
+  ///   禁止其他应用（含文件管理器）访问，未尝试，由调用方引导改用
+  ///   公共下载目录；
+  /// - `no_handler`：本机没有声明能打开目录的文件管理器（或被系统拒绝）。
+  static Future<String?> openDirectory({
+    required String path,
+    required String docId,
+  }) async {
+    try {
+      return await _channel.invokeMethod<String>('openDirectory', {
+        'path': path,
+        'docId': docId,
+      });
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      return null;
+    }
+  }
 }

@@ -36,30 +36,36 @@ void main() {
     });
   });
 
-  group('buildStorageDocUri（Android 打开所在目录的 content URI 回退）', () {
+  group('buildStorageDocId（Android 打开所在目录的卷 docId）', () {
     test('内部存储路径映射为 primary 卷', () {
       expect(
-        buildStorageDocUri('/storage/emulated/0/Music/易格'),
-        'content://com.android.externalstorage.documents/document/'
-            'primary:Music/易格',
+        buildStorageDocId('/storage/emulated/0/Music/易格'),
+        'primary:Music/易格',
       );
       expect(
-        buildStorageDocUri('/storage/emulated/0/'),
-        'content://com.android.externalstorage.documents/document/primary:',
+        buildStorageDocId('/storage/emulated/0/'),
+        'primary:',
       );
     });
 
     test('外置卷（SD/USB，自定义下载位置常见落点）映射为卷 ID', () {
       expect(
-        buildStorageDocUri('/storage/0000-0000/我的音乐'),
-        'content://com.android.externalstorage.documents/document/'
-            '0000-0000:我的音乐',
+        buildStorageDocId('/storage/0000-0000/我的音乐'),
+        '0000-0000:我的音乐',
       );
       expect(
-        buildStorageDocUri('/storage/AB12-CD34/Music/sub dir'),
-        'content://com.android.externalstorage.documents/document/'
-            'AB12-CD34:Music/sub dir',
+        buildStorageDocId('/storage/AB12-CD34/Music/sub dir'),
+        'AB12-CD34:Music/sub dir',
       );
+    });
+
+    test('非 /storage 路径返回 null（不拼出指向不存在文档的 URI）', () {
+      expect(
+        buildStorageDocId('/data/user/0/com.muye.ecells.music/files/x'),
+        isNull,
+      );
+      // 主用户以外的 emulated 路径同样不支持。
+      expect(buildStorageDocId('/storage/emulated/10/Music'), isNull);
     });
   });
 

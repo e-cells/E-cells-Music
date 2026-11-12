@@ -2,6 +2,7 @@ package com.muye.ecells.music
 
 import android.Manifest
 import android.app.DownloadManager
+import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
 import android.content.ContentUris
 import android.content.Context
@@ -14,6 +15,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.app.SearchManager
+import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.Settings
 import android.media.audiofx.BassBoost
@@ -85,6 +87,11 @@ class MainActivity : AudioServiceActivity() {
         private const val TAG_LYRICS_OVERLAY = "LyricsOverlay"
         private const val TAG_VOICE_SEARCH = "VoiceSearch"
         private const val TAG_STORAGE_ACCESS = "StorageAccess"
+
+        // externalstorage documents provider 的 authority（Shared Storage
+        // 路径 ↔ 卷 docId 的 URI 组装用，见 openDirectoryInFileManager）。
+        private const val EXTERNAL_STORAGE_AUTHORITY =
+            "com.android.externalstorage.documents"
     }
 
     private val downloadReceiver = object : BroadcastReceiver() {
@@ -398,6 +405,25 @@ class MainActivity : AudioServiceActivity() {
                                 arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
                                 REQUEST_WRITE_STORAGE
                             )
+                        }
+                    }
+                    // 「已下载-打开文件夹」：用系统文件管理器打开共享存储目录。
+                    // url_launcher 发 Intent 带不上 MIME 类型（file:// 目录
+                    // URI 无人响应且 targetSdk 24+ 有 FileUriExposed 风险，
+                    // 无 MIME 的 content URI 同样无人认领），必须原生发。
+                    "openDirectory" -> {
+                        val path = call.argument<String>("path")
+                        val docId = call.argument<String>("docId")
+                        if (path.isNullOrEmpty() || docId.isNullOrEmpty()) {
+                            result.error("invalid_args", "path or docId is empty", null)
+                            return@setMethodCallHandler
+                        }
+                        runCatching {
+                            openDirectoryInFileManager(path, docId)
+                        }.onSuccess { status ->
+                            result.success(status)
+                        }.onFailure { error ->
+                            result.error("open_failed", error.message, null)
                         }
                     }
                     else -> result.notImplemented()
@@ -855,6 +881,49 @@ class MainActivity : AudioServiceActivity() {
                 this,
                 Manifest.permission.WRITE_EXTERNAL_STORAGE
             ) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    /**
+     * 用系统文件管理器打开共享存储目录（已下载-打开文件夹）。
+     *
+     * ACTION_VIEW + externalstorage documents 的目录 content URI + MIME
+     * `vnd.android.document/directory`：DocumentsUI（原生「文件」）、
+     * Files by Google、各家 OEM/第三方文件管理器普遍按此口径声明 VIEW
+     * 过滤器，这是 Android 上打开目录的唯一标准通道（带不上 MIME 的
+     * url_launcher 两种 URI 都无人响应）。
+     *
+     * 不用 resolveActivity 预判：API 30+ 包可见性过滤会让查询结果偏空，
+     * 而 startActivity 不受该过滤影响，直接启动按异常判定即可。
+     *
+     * @param path 目录文件系统路径（用于 Android/data|obb 私有目录判定）
+     * @param docId Dart 侧解析的卷 docId（primary:RelPath 或 卷ID:RelPath）
+     * @return Dart 侧状态：opened / app_private / no_handler
+     */
+    private fun openDirectoryInFileManager(path: String, docId: String): String {
+        // API 30+ 分区存储：任何应用的 Android/data|obb 对其他应用不可读
+        // （持有「所有文件访问」的文件管理器也不豁免），弹开只会得到
+        // 拒绝页，提前返回让 Dart 引导用户改用公共下载目录。
+        val normalized = File(path).absolutePath
+        val appPrivate = normalized.contains("/Android/data/") ||
+            normalized.contains("/Android/obb/")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && appPrivate) {
+            return "app_private"
+        }
+
+        val uri = DocumentsContract.buildDocumentUri(EXTERNAL_STORAGE_AUTHORITY, docId)
+        val intent = Intent(Intent.ACTION_VIEW)
+            .setDataAndType(uri, DocumentsContract.Document.MIME_TYPE_DIR)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        return try {
+            startActivity(intent)
+            "opened"
+        } catch (e: ActivityNotFoundException) {
+            Log.w(TAG_STORAGE_ACCESS, "无文件管理器声明可打开目录 docId=$docId")
+            "no_handler"
+        } catch (e: SecurityException) {
+            Log.w(TAG_STORAGE_ACCESS, "打开目录被系统拒绝 docId=$docId: ${e.message}")
+            "no_handler"
         }
     }
 

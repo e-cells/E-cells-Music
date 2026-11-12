@@ -9,13 +9,13 @@ import 'package:flutter/foundation.dart'
         visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../controllers/auth_controller.dart';
 import '../../controllers/download_controller.dart';
 import '../../controllers/player_controller.dart';
 import '../../models/music_models.dart';
 import '../../services/music_api.dart';
+import '../../services/storage_access_service.dart';
 import '../form_factor.dart';
 import '../widgets/app_song_row.dart';
 import '../widgets/app_dialog.dart';
@@ -564,6 +564,10 @@ class _DownloadedSongRow extends StatelessWidget {
 /// - Windows 用 `explorer /select,` 打开目录并选中歌曲文件（与浏览器
 ///   "在文件夹中显示"一致的现代口径），macOS 用 `open -R` 在 Finder
 ///   中定位；
+/// - Android 走原生 openDirectory（ACTION_VIEW + 目录 MIME，见
+///   [StorageAccessService.openDirectory]）；App 专属目录（默认下载
+///   位置）在 Android 11+ 任何文件管理器都无权访问，转为引导用户
+///   改用公共下载目录；
 /// - 任何一步失败（精简发行版没有 xdg-open、explorer 拉起失败等）都以
 ///   全局 Toast 反馈，不产生未捕获异步异常。
 Future<void> _openContainingFolder(
@@ -614,14 +618,30 @@ Future<void> _openContainingFolder(
     } else if (platform == TargetPlatform.linux) {
       await Process.run('xdg-open', [dir]);
     } else if (platform == TargetPlatform.android) {
-      // Android 无法直接打开文件管理器到指定目录，尝试用 file:// URI
-      // （路径含空格/中文必须编码，直接拼接会让 URI 解析截断）。
-      final uri = Uri.file(dir);
-      if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-        // 回退：尝试 content URI 方式（自定义下载位置可能在 SD/USB 盘，
-        // 卷 ID 不同于内部存储的 primary，见 [buildStorageDocUri]）。
-        final contentUri = Uri.parse(buildStorageDocUri(dir));
-        await launchUrl(contentUri, mode: LaunchMode.externalApplication);
+      // url_launcher 发 Intent 带不上 MIME 类型：file:// 目录 URI 现代
+      // 系统无人响应且 targetSdk 24+ 有 FileUriExposed 风险，无 MIME 的
+      // content URI 同样无人认领——必须走原生 openDirectory（ACTION_VIEW +
+      // vnd.android.document/directory，文件管理器唯一标准打开口径）。
+      final docId = buildStorageDocId(dir);
+      if (docId == null) {
+        Toast.error('该目录不在共享存储，文件管理器无法打开：$dir');
+        return;
+      }
+      switch (await StorageAccessService.openDirectory(
+        path: dir,
+        docId: docId,
+      )) {
+        case 'opened':
+          break; // 已拉起文件管理器，无需提示
+        case 'app_private':
+          // 默认下载目录是 App 专属目录，Android 11+ 系统禁止任何文件
+          // 管理器访问（「所有文件访问」也不豁免）；引导改公共目录。
+          Toast.show(
+            '默认下载目录是应用专属目录，系统限制文件管理器访问；'
+            '可在 设置 → 缓存 → 下载位置 改为公共目录后再打开',
+          );
+        default:
+          Toast.error('未找到能打开目录的文件管理器，请手动前往：$dir');
       }
     } else {
       // iOS 无文件管理器直达能力：明确反馈而非静默无响应。
@@ -633,25 +653,30 @@ Future<void> _openContainingFolder(
   }
 }
 
-/// 构造 externalstorage documents 的 content URI（打开所在目录的回退
-/// 方案，纯函数供单测）。
+/// 把共享存储路径解析为 externalstorage documents 的卷 docId（打开
+/// 所在目录用，原生侧 [StorageAccessService.openDirectory] 以
+/// DocumentsContract.buildDocumentUri 组出正确编码的 content URI）。
 ///
 /// - 内部存储 `/storage/emulated/0/Music` → `primary:Music`；
 /// - 外置卷（SD/USB，自定义下载位置的常见落点）`/storage/0000-0000/Music`
 ///   → `0000-0000:Music`；
-/// - 其他前缀（App 专属目录等）按原样剥 `/storage/` 前缀拼 primary 兜底。
+/// - 不以 `/storage/` 起头的路径（应用文档目录等）返回 null，由调用方
+///   提示无法打开——拼 primary: 前缀只会得到指向不存在文档的 URI。
 @visibleForTesting
-String buildStorageDocUri(String dir) {
-  final volume = RegExp(
-    r'^/storage/([0-9A-Za-z]{4}-[0-9A-Za-z]{4})/(.*)$',
-  ).firstMatch(dir);
+String? buildStorageDocId(String dir) {
+  final volume = RegExp(r'^/storage/([^/]+)/(.*)$').firstMatch(dir);
   if (volume != null) {
-    return 'content://com.android.externalstorage.documents/document/'
-        '${volume.group(1)}:${volume.group(2)}';
+    final volumeId = volume.group(1)!;
+    if (volumeId == 'emulated') {
+      // /storage/emulated/<userId>/...：仅支持主用户（0）的 primary 卷。
+      const primaryPrefix = '/storage/emulated/0/';
+      return dir.startsWith(primaryPrefix)
+          ? 'primary:${dir.substring(primaryPrefix.length)}'
+          : null;
+    }
+    return '$volumeId:${volume.group(2)}';
   }
-  final relative = dir.replaceFirst('/storage/emulated/0/', '');
-  return 'content://com.android.externalstorage.documents/document/'
-      'primary:$relative';
+  return null;
 }
 
 /// 构造 PowerShell 侧「原样传递 explorer /select,"路径"」的命令片段。

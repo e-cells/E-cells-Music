@@ -1,7 +1,7 @@
 name: shiyin_music
 description: "易格音乐 - 为车机打造的第三方音乐播放器（Flutter）"
 publish_to: 'none'
-version: 2.1.1+2001001
+version: 2.1.2+2001002
 
 environment:
   sdk: ^3.11.5

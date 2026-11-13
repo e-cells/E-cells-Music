@@ -803,14 +803,41 @@ class HomePageState extends SwrSectionState<HomePage, HomeData>
         // 落地；await startupRestored 后 prefs 必然恢复完成。
         final preferDaily = widget.player.startupPlaySource == 'daily';
         if (songs.isNotEmpty && (preferDaily || !hasRestored)) {
-          // 每日推荐替换整个队列；preferDaily 但推荐为空（如未登录且
-          // 缓存无数据）时回退继续播放。
-          widget.player.playSong(songs.first, queue: songs);
+          // 上次保存的队列与本次每日推荐逐位一致（同日内重启 APP/开机
+          // 自启的常见场景）：继续播上次播到的歌，不回第一首重头播。
+          // 一致性必须消费时刻读：queue/hasRestoredPlaybackState 由
+          // await 过的启动恢复落定，守卫时刻捕获的可能是恢复前的空值。
+          final continueDaily =
+              preferDaily &&
+              widget.player.hasRestoredPlaybackState &&
+              _queueMatchesDaily(widget.player.queue, songs);
+          if (continueDaily) {
+            widget.player.resumePlayback();
+          } else {
+            // 每日推荐替换整个队列；preferDaily 但推荐为空（如未登录且
+            // 缓存无数据）时回退继续播放。
+            widget.player.playSong(songs.first, queue: songs);
+          }
         } else {
           widget.player.resumePlayback();
         }
       });
     });
+  }
+
+  /// 上次保存的播放队列是否与本次每日推荐逐位一致（等长且同序同 hash）。
+  ///
+  /// 一致说明上次会话播的就是这份推荐列表（同日内重启 APP / 开机自启），
+  /// 开机播放内容选「每日推荐」时应从上次的当前歌继续而不是回第一首；
+  /// 跨天推荐已刷新、用户后来播了别的歌单都会导致不一致，仍整队重播。
+  /// 注：播放状态最多持久化 200 首（_playbackStateMaxQueueSize），推荐
+  /// 列表超长被截断时必然判不一致，回退重头播，可接受。
+  bool _queueMatchesDaily(List<Song> restoredQueue, List<Song> dailySongs) {
+    if (restoredQueue.length != dailySongs.length) return false;
+    for (var i = 0; i < dailySongs.length; i++) {
+      if (restoredQueue[i].hash != dailySongs[i].hash) return false;
+    }
+    return true;
   }
 
   /// 新歌速递失败时返回空列表，不阻塞首页其他板块。

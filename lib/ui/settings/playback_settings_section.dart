@@ -99,7 +99,9 @@ class PlaybackSettingsSection extends StatelessWidget {
             child: const ListTile(
               contentPadding: EdgeInsets.zero,
               title: Text('每日推荐'),
-              subtitle: Text('播放每日推荐歌单并替换播放队列；无推荐数据时恢复上次队列'),
+              subtitle: Text(
+                '播放每日推荐歌单并替换播放队列；上次播的就是这份推荐时从上次的歌继续，无推荐数据时恢复上次队列',
+              ),
             ),
           ),
         ],
@@ -168,7 +170,7 @@ class PlaybackSettingsSection extends StatelessWidget {
                 iconColor: const Color(0xFF00897B),
                 title: '开机播放内容',
                 subtitle: player.startupPlaySource == 'daily'
-                    ? '每日推荐（无推荐数据时恢复上次队列）'
+                    ? '每日推荐（同一份推荐从上次的歌继续播）'
                     : '继续播放（恢复上次队列）',
                 onTap: () => _showStartupPlaySourceDialog(context),
               ),

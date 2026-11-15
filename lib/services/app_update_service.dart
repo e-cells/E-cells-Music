@@ -347,7 +347,8 @@ class AppUpdateService {
       if (!isStableVersionTag(tag)) {
         throw StateError('暂无正式发布版本');
       }
-      return _assembleFromTag(tag: tag, updateContent: '更新说明获取失败，请前往发布页查看。');
+      return await _assembleFromTag(
+          tag: tag, updateContent: '更新说明获取失败，请前往发布页查看。');
     } finally {
       client.close();
     }

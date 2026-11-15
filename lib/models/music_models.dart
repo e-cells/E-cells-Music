@@ -4,6 +4,7 @@ export 'cloud_drive.dart';
 export 'comment.dart';
 export 'fm.dart';
 export 'model_parsing.dart';
+export 'mv.dart';
 export 'netease_external.dart';
 export 'playlist.dart';
 export 'search_rank.dart';

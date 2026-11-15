@@ -3,7 +3,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shiyin_music/controllers/player_controller.dart';
 import 'package:shiyin_music/services/desktop_lyrics_service.dart';
 import 'package:shiyin_music/ui/desktop/lyrics_karaoke_line.dart';
-import 'package:shiyin_music/ui/form_factor.dart';
 import 'package:shiyin_music/ui/pages/desktop_lyrics_settings_page.dart';
 
 class _FakePlayerController extends ChangeNotifier

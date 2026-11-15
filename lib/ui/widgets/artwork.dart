@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' show cos, min, pi;
 
 import 'package:flutter/material.dart';
@@ -160,6 +161,11 @@ class _ArtworkState extends State<Artwork> {
   @override
   Widget build(BuildContext context) {
     final imageUrl = widget.url;
+    final bool isLocalFile = imageUrl != null &&
+        !imageUrl.startsWith('content://') &&
+        !imageUrl.startsWith('http://') &&
+        !imageUrl.startsWith('https://');
+
     final child = imageUrl == null
         ? _Fallback(icon: widget.icon)
         : imageUrl.startsWith('content://')
@@ -170,26 +176,41 @@ class _ArtworkState extends State<Artwork> {
                 icon: widget.icon,
                 highRes: widget.highRes,
               )
-            : RetryableNetworkImage(
-                url: imageUrl,
-                // 解码尺寸吸附到固定档位（见 [decodeSizeFor]）：同一封面在不同
-                // 布局尺寸下复用同一条 ImageCache 条目，条目数下降、重复下载变少。
-                cacheWidth: decodeSizeFor(widget.size, highRes: widget.highRes),
-                cacheHeight:
-                    decodeSizeFor(widget.size, highRes: widget.highRes),
-                fit: BoxFit.cover,
-                errorBuilder:
-                    (context, error, stackTrace) => _Fallback(icon: widget.icon),
-                loadingBuilder: (context, child, progress) {
-                  if (progress == null) {
-                    return child;
-                  }
-                  return _ShimmerBox(
-                    size: widget.size,
-                    borderRadius: widget.borderRadius,
+            : isLocalFile
+                ? Image.file(
+                    File(
+                      imageUrl.startsWith('file://')
+                          ? Uri.parse(imageUrl).toFilePath()
+                          : imageUrl,
+                    ),
+                    cacheWidth:
+                        decodeSizeFor(widget.size, highRes: widget.highRes),
+                    cacheHeight:
+                        decodeSizeFor(widget.size, highRes: widget.highRes),
+                    fit: BoxFit.cover,
+                    errorBuilder:
+                        (context, error, stackTrace) => _Fallback(icon: widget.icon),
+                  )
+                : RetryableNetworkImage(
+                    url: imageUrl,
+                    // 解码尺寸吸附到固定档位（见 [decodeSizeFor]）：同一封面在不同
+                    // 布局尺寸下复用同一条 ImageCache 条目，条目数下降、重复下载变少。
+                    cacheWidth: decodeSizeFor(widget.size, highRes: widget.highRes),
+                    cacheHeight:
+                        decodeSizeFor(widget.size, highRes: widget.highRes),
+                    fit: BoxFit.cover,
+                    errorBuilder:
+                        (context, error, stackTrace) => _Fallback(icon: widget.icon),
+                    loadingBuilder: (context, child, progress) {
+                      if (progress == null) {
+                        return child;
+                      }
+                      return _ShimmerBox(
+                        size: widget.size,
+                        borderRadius: widget.borderRadius,
+                      );
+                    },
                   );
-                },
-              );
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(widget.borderRadius),

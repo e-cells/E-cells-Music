@@ -3,11 +3,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../controllers/auth_controller.dart';
+import '../../controllers/mv_player_controller.dart';
 import '../../controllers/player_controller.dart';
 import '../../controllers/theme_controller.dart';
 import '../../core/api_client.dart';
 import '../../models/music_models.dart';
 import '../form_factor.dart';
+import '../pages/mv_player_page.dart';
 import 'artwork.dart';
 import 'desktop_anchored_menu.dart';
 import 'toast.dart';
@@ -658,6 +660,71 @@ Future<void> addSongToQueueWithFeedback({
     Toast.show(added ? '已设为下一首播放' : '当前歌曲已在播放中');
   } catch (error) {
     Toast.error('添加失败：$error');
+  }
+}
+
+/// 「观看 MV」统一入口：把歌曲匹配成 MV 播放（歌曲 ⇄ MV 互切的 MV 侧）。
+///
+/// [songs] 为点播上下文的队列（单曲场景传 [song] 一个即可）：有 MV 的歌
+/// 按原顺序进 MV 队列、首个命中起播后立即跳转 MV 页，其余批次后台补
+/// 队列。没有 MV 时以 [noMvMessage] toast 告知并保持原播放不动。
+Future<void> watchMvWithFeedback({
+  required BuildContext context,
+  required Song song,
+  List<Song>? songs,
+  String noMvMessage = '这首歌暂无 MV',
+}) async {
+  final mvPlayer = MvPlayerController.instance;
+  if (mvPlayer.isResolvingQueue) {
+    Toast.info('正在匹配 MV，请稍候');
+    return;
+  }
+  final curMv = mvPlayer.currentMv;
+  if (mvPlayer.hasActiveSession && curMv != null) {
+    final sourceSong = mvPlayer.sourceSongFor(curMv);
+    final isSameSong =
+        (song.albumAudioId != null &&
+            song.albumAudioId!.isNotEmpty &&
+            curMv.albumAudioId == song.albumAudioId) ||
+        (sourceSong != null &&
+            ((song.hash.isNotEmpty && sourceSong.hash == song.hash) ||
+                (song.id.isNotEmpty && sourceSong.id == song.id)));
+    if (isSameSong) {
+      if (!mvPlayer.isPlaying && !mvPlayer.isPreparing) {
+        unawaited(mvPlayer.togglePlay());
+      }
+      unawaited(MvPlayerPage.open(context, mvPlayer: mvPlayer));
+      return;
+    }
+  }
+  final List<Song> contextSongs;
+  if (songs == null || songs.isEmpty) {
+    contextSongs = [song];
+  } else {
+    final idx = songs.indexWhere(
+      (s) =>
+          (song.hash.isNotEmpty && s.hash == song.hash) ||
+          (song.id.isNotEmpty && s.id == song.id),
+    );
+    if (idx > 0) {
+      contextSongs = [...songs.sublist(idx), ...songs.sublist(0, idx)];
+    } else if (idx == 0) {
+      contextSongs = songs;
+    } else {
+      contextSongs = [song, ...songs];
+    }
+  }
+  var pageOpened = false;
+  final count = await mvPlayer.playSongsAsMvQueue(
+    contextSongs,
+    onFirstPlay: () {
+      if (pageOpened) return;
+      pageOpened = true;
+      unawaited(MvPlayerPage.open(context.mounted ? context : null, mvPlayer: mvPlayer));
+    },
+  );
+  if (count == 0 && !pageOpened) {
+    Toast.info(noMvMessage);
   }
 }
 

@@ -68,6 +68,25 @@ String? normalizeImageUrl(String? url, {int size = 480}) {
       .replaceAll('/{SIZE}/', '/$size/');
 }
 
+/// 归一化 MV 封面地址：
+/// - 完整 URL（含 `{size}` 占位符）走 [normalizeImageUrl]；
+/// - 酷狗 MV 搜索/详情接口常见的纯文件名（如 `"Pic": "20200620174316264397.jpg"`，
+///   前 8 位为 `YYYYMMDD` 日期目录）补全为 `http://imge.kugou.com/mvhdpic/$size/YYYYMMDD/文件名`。
+String? normalizeMvCoverUrl(String? url, {int size = 480}) {
+  final raw = asString(url);
+  if (raw == null) {
+    return null;
+  }
+  if (raw.startsWith('http://') || raw.startsWith('https://')) {
+    return normalizeImageUrl(raw, size: size);
+  }
+  if (RegExp(r'^\d{8}').hasMatch(raw)) {
+    final dateDir = raw.substring(0, 8);
+    return 'http://imge.kugou.com/mvhdpic/$size/$dateDir/$raw';
+  }
+  return normalizeImageUrl(raw, size: size);
+}
+
 String formatDuration(Duration? duration) {
   if (duration == null) {
     return '--:--';

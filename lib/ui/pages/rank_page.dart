@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../../config/app_config.dart';
 import '../../controllers/auth_controller.dart';
+import '../../controllers/mv_player_controller.dart';
 import '../../controllers/player_controller.dart';
 import '../../controllers/theme_controller.dart';
 import '../../models/music_models.dart';
@@ -19,6 +20,7 @@ import '../widgets/mini_player.dart';
 import '../widgets/refresh_equalizer.dart';
 import '../widgets/song_action_sheets.dart';
 import '../widgets/swr_section_state.dart';
+import '../widgets/toast.dart';
 import '../player/song_tap_handler.dart';
 import '../widgets/desktop_song_table_row.dart'
     show DesktopSongTableHeader, DesktopSongTableRow;
@@ -1123,6 +1125,20 @@ class _RankDetailPageState extends State<RankDetailPage> {
     }
   }
 
+  /// 以 MV 播放整个榜单：批量匹配 MV 队列，无 MV 的歌剔除。
+  /// 首个 MV 起播即跳转 MV 页，余下匹配后台补队列。
+  Future<void> _playAllMv() async {
+    if (_songs.isEmpty) return;
+    if (MvPlayerController.instance.isResolvingQueue) return;
+    Toast.info('正在匹配榜单 MV…');
+    await watchMvWithFeedback(
+      context: context,
+      song: _songs.first,
+      songs: List.of(_songs),
+      noMvMessage: '榜单里的歌曲暂无 MV',
+    );
+  }
+
   /// 后台拉取榜单全部分页，并在仍播放本榜单时扩展播放队列（与歌单详情页同款机制）。
   /// 播放立即以已加载列表开始，不阻塞等待；补全完成后静默替换队列，
   /// 避免"播放全部只含首屏 50 首、播完回到第一首"。
@@ -1384,6 +1400,12 @@ class _RankDetailPageState extends State<RankDetailPage> {
                             ),
                             elevation: 0,
                           ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton.filledTonal(
+                          tooltip: '以 MV 播放全部',
+                          onPressed: _playAllMv,
+                          icon: const Icon(Icons.music_video_rounded, size: 20),
                         ),
                         if (_isLoading)
                           const Padding(
@@ -1680,6 +1702,12 @@ class _RankDetailPageState extends State<RankDetailPage> {
                                 ),
                           ),
                           const Spacer(),
+                          IconButton.filledTonal(
+                            tooltip: '以 MV 播放全部',
+                            onPressed: _playAllMv,
+                            icon: const Icon(Icons.music_video_rounded),
+                          ),
+                          const SizedBox(width: 8),
                           FilledButton.icon(
                             onPressed: _playAll,
                             icon:

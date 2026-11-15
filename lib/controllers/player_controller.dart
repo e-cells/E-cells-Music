@@ -513,6 +513,9 @@ abstract class _PlayerControllerBase extends ChangeNotifier {
   /// VIP 领取任务（由 main.dart 在创建后注入，用于播放时按需领取 VIP）。
   VipBackgroundTask? vipClaim;
 
+  /// 歌曲起播前暂停 MV 播放（由 main.dart 注入，音频焦点互斥的歌曲侧）。
+  VoidCallback? onPauseMvPlayer;
+
   final MusicApi _api;
   final MusicAudioHandler _audioHandler;
   final AudioEffectsService _audioEffects = AudioEffectsService();
@@ -1035,6 +1038,60 @@ abstract class _PlayerControllerBase extends ChangeNotifier {
   void _scheduleSavePlaybackState();
 
   Future<PlayUrl> _resolvePlayUrl(Song song);
+
+  void _applyResolvedLocalCover(Song song, String coverUrl);
+
+  /// 本地歌曲在线匹配的并发请求去重缓存。
+  final Map<String, Future<List<Song>>> _localSearchInFlight = {};
+
+  Future<List<Song>> _searchLocalSongCandidates(Song song) {
+    final query = _buildLocalSearchQuery(song);
+    if (query.isEmpty) return Future.value(const []);
+    final inFlight = _localSearchInFlight[query];
+    if (inFlight != null) return inFlight;
+    final future = _api
+        .searchSongs(query, pageSize: 5)
+        .catchError((Object err) {
+          debugPrint('Failed to search songs for local song ($query): $err');
+          return <Song>[];
+        })
+        .whenComplete(() {
+          _localSearchInFlight.remove(query);
+        });
+    _localSearchInFlight[query] = future;
+    return future;
+  }
+
+  String _buildLocalSearchQuery(Song song) {
+    final cleanTitle = song.title.trim();
+    final artist = song.artist.trim();
+    final isUnknownArtist = artist.isEmpty ||
+        artist == '未知艺人' ||
+        artist.toLowerCase() == '<unknown>' ||
+        artist.toLowerCase() == 'unknown' ||
+        artist == '未知';
+
+    if (isUnknownArtist) {
+      return cleanTitle;
+    }
+    return '$cleanTitle $artist';
+  }
+
+  Song? _findBestLocalMatch(List<Song> candidates, Song localSong) {
+    if (candidates.isEmpty) return null;
+    if (localSong.duration != null && localSong.duration! > Duration.zero) {
+      final localSec = localSong.duration!.inSeconds;
+      for (final candidate in candidates) {
+        if (candidate.duration != null) {
+          final diff = (candidate.duration!.inSeconds - localSec).abs();
+          if (diff <= 4) {
+            return candidate;
+          }
+        }
+      }
+    }
+    return candidates.first;
+  }
 
   Future<void> _loadClimax(Song song);
 

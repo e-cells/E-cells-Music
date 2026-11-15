@@ -8,6 +8,7 @@ import '../widgets/app_section.dart';
 
 import '../../config/app_config.dart';
 import '../../controllers/auth_controller.dart';
+import '../../controllers/mv_player_controller.dart';
 import '../../controllers/player_controller.dart';
 import '../../models/app_version.dart';
 import '../../models/music_models.dart';
@@ -22,12 +23,15 @@ import '../widgets/cover_play_overlay.dart';
 import '../widgets/home_collapsible_header.dart';
 import '../widgets/home_song_row.dart';
 import '../widgets/horizontal_wheel_scroll.dart';
+import '../widgets/mv_card.dart';
 import '../widgets/refresh_equalizer.dart';
-import '../widgets/song_action_sheets.dart' show toggleLikeWithFeedback;
+import '../widgets/song_action_sheets.dart'
+    show toggleLikeWithFeedback, watchMvWithFeedback;
 import '../widgets/swr_section_state.dart';
 import '../widgets/toast.dart';
 import '../player/song_tap_handler.dart';
 import 'artist_detail_page.dart';
+import 'mv_player_page.dart';
 import 'playlist_detail_page.dart';
 import '../../controllers/theme_controller.dart';
 import '../../controllers/download_controller.dart';
@@ -1445,6 +1449,9 @@ class HomePageState extends SwrSectionState<HomePage, HomeData>
                         onTapTitle: () => _openTopSongs(data.topSongs),
                       ),
                     SliverToBoxAdapter(
+                      child: _MvFeedSection(api: widget.api),
+                    ),
+                    SliverToBoxAdapter(
                       child: SizedBox(height: wideShell ? 24 : 166),
                     ),
                   ],
@@ -1631,6 +1638,7 @@ class HomePageState extends SwrSectionState<HomePage, HomeData>
                               onTapTitle: () =>
                                   _openTopSongs(data.topSongs),
                             ),
+                          _MvFeedSection(api: widget.api),
                         ],
                       ),
                     ),
@@ -2339,6 +2347,72 @@ class _SongSectionState extends State<_SongSection> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// 首页「MV 精选」横滑区块（/scene/video/list）。
+///
+/// 自管理加载：失败/空数据时整块静默收起，不阻塞首页其他板块
+/// （与新歌速递的降级策略一致）。
+class _MvFeedSection extends StatefulWidget {
+  const _MvFeedSection({required this.api});
+
+  final MusicApi api;
+
+  @override
+  State<_MvFeedSection> createState() => _MvFeedSectionState();
+}
+
+class _MvFeedSectionState extends State<_MvFeedSection> {
+  List<MvInfo> _mvs = const [];
+  bool _loaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final mvs = await widget.api.mvFeed(pageSize: 12);
+      if (mounted) {
+        setState(() {
+          _mvs = mvs;
+          _loaded = true;
+        });
+      }
+    } catch (_) {
+      // MV 精选拉取失败静默收起，不影响首页其他板块。
+      if (mounted) setState(() => _loaded = true);
+    }
+  }
+
+  void _playMv(MvInfo mv) {
+    final mvPlayer = MvPlayerController.instance;
+    if (MvInfo.isSameMv(mvPlayer.currentMv, mv) && mvPlayer.hasActiveSession) {
+      if (!mvPlayer.isPlaying && !mvPlayer.isPreparing) {
+        unawaited(mvPlayer.togglePlay());
+      }
+      unawaited(MvPlayerPage.open(context, mvPlayer: mvPlayer));
+      return;
+    }
+    unawaited(mvPlayer.playMv(mv, queue: List<MvInfo>.of(_mvs)));
+    unawaited(MvPlayerPage.open(context, mvPlayer: mvPlayer));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 加载中/空数据都静默占位（避免加载骨架闪烁）。
+    if (!_loaded || _mvs.isEmpty) return const SizedBox.shrink();
+    return AppHorizontalRail<MvInfo>(
+      title: 'MV 精选',
+      items: _mvs,
+      height: 152,
+      itemWidth: 170,
+      itemBuilder: (context, mv) =>
+          MvCard(mv: mv, width: 158, onTap: () => _playMv(mv)),
     );
   }
 }
@@ -3200,6 +3274,46 @@ class _RadioSectionState extends SwrSectionState<_RadioSection, _RadioData> {
     }
   }
 
+  /// 以 MV 播放电台：电台歌曲批量匹配 MV 队列（无 MV 的歌剔除）。
+  Future<void> _playStationMv(FmStation station) async {
+    if (_loadingStationId != null) {
+      return;
+    }
+
+    setState(() => _loadingStationId = station.id);
+    try {
+      final songs = await widget.api.fmSongs(station);
+      final queue = songs.isEmpty ? station.previewSongs : songs;
+      if (!mounted) {
+        return;
+      }
+      if (queue.isEmpty) {
+        Toast.info('这个电台暂时没有可播放歌曲');
+        return;
+      }
+      final mvPlayer = MvPlayerController.instance;
+      if (mvPlayer.isResolvingQueue) {
+        return;
+      }
+      Toast.info('正在匹配电台 MV…');
+      await watchMvWithFeedback(
+        context: context,
+        song: queue.first,
+        songs: queue,
+        noMvMessage: '电台歌曲暂无 MV',
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      Toast.error('电台加载失败：${friendlyServiceErrorMessage(error)}');
+    } finally {
+      if (mounted) {
+        setState(() => _loadingStationId = null);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final screenSize = MediaQuery.sizeOf(context);
@@ -3260,6 +3374,8 @@ class _RadioSectionState extends SwrSectionState<_RadioSection, _RadioData> {
                                       radio.recommended[0].id,
                                   onTap: () =>
                                       _playStation(radio.recommended[0]),
+                                  onPlayMv: () =>
+                                      _playStationMv(radio.recommended[0]),
                                 ),
                               ),
                               const SizedBox(width: 14),
@@ -3271,6 +3387,8 @@ class _RadioSectionState extends SwrSectionState<_RadioSection, _RadioData> {
                                       radio.recommended[1].id,
                                   onTap: () =>
                                       _playStation(radio.recommended[1]),
+                                  onPlayMv: () =>
+                                      _playStationMv(radio.recommended[1]),
                                 ),
                               ),
                             ],
@@ -3282,6 +3400,8 @@ class _RadioSectionState extends SwrSectionState<_RadioSection, _RadioData> {
                                 radio.recommended.first.id,
                             onTap: () =>
                                 _playStation(radio.recommended.first),
+                            onPlayMv: () =>
+                                _playStationMv(radio.recommended.first),
                           ),
                   ),
                 if (radio.recommended.length > 2) ...[
@@ -3290,6 +3410,7 @@ class _RadioSectionState extends SwrSectionState<_RadioSection, _RadioData> {
                     stations: radio.recommended.skip(2).toList(),
                     loadingStationId: _loadingStationId,
                     onTap: _playStation,
+                    onPlayMv: _playStationMv,
                   ),
                 ],
                 for (final group in radio.groups) ...[
@@ -3307,6 +3428,7 @@ class _RadioSectionState extends SwrSectionState<_RadioSection, _RadioData> {
                     stations: group.stations,
                     loadingStationId: _loadingStationId,
                     onTap: _playStation,
+                    onPlayMv: _playStationMv,
                   ),
                 ],
                 if (radio.recommended.isEmpty && radio.groups.isEmpty)
@@ -3333,6 +3455,7 @@ class _RadioSectionState extends SwrSectionState<_RadioSection, _RadioData> {
                   station: radio.recommended.first,
                   loading: _loadingStationId == radio.recommended.first.id,
                   onTap: () => _playStation(radio.recommended.first),
+                  onPlayMv: () => _playStationMv(radio.recommended.first),
                 ),
               if (radio.recommended.length > 1) ...[
                 const SizedBox(height: 14),
@@ -3341,6 +3464,7 @@ class _RadioSectionState extends SwrSectionState<_RadioSection, _RadioData> {
                   stations: radio.recommended.skip(1).toList(),
                   loadingStationId: _loadingStationId,
                   onTap: _playStation,
+                  onPlayMv: _playStationMv,
                 ),
               ],
               for (final group in radio.groups) ...[
@@ -3356,6 +3480,7 @@ class _RadioSectionState extends SwrSectionState<_RadioSection, _RadioData> {
                   stations: group.stations,
                   loadingStationId: _loadingStationId,
                   onTap: _playStation,
+                  onPlayMv: _playStationMv,
                 ),
               ],
               if (radio.recommended.isEmpty && radio.groups.isEmpty)
@@ -3427,11 +3552,15 @@ class _RadioHeroCard extends StatelessWidget {
     required this.station,
     required this.loading,
     required this.onTap,
+    this.onPlayMv,
   });
 
   final FmStation station;
   final bool loading;
   final VoidCallback onTap;
+
+  /// 「以 MV 播放」入口；null 时不渲染 MV 按钮。
+  final VoidCallback? onPlayMv;
 
   @override
   Widget build(BuildContext context) {
@@ -3556,6 +3685,11 @@ class _RadioHeroCard extends StatelessWidget {
                   ),
                 ),
                 SizedBox(width: gap),
+                if (onPlayMv != null)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: _StationMvBadge(loading: loading, onTap: onPlayMv!),
+                  ),
                 _RadioPlayBadge(loading: loading),
               ],
             ),
@@ -3566,17 +3700,53 @@ class _RadioHeroCard extends StatelessWidget {
 }
 }
 
+/// 电台卡「以 MV 播放」小圆钮：主色浅底 + music_video 图标。
+class _StationMvBadge extends StatelessWidget {
+  const _StationMvBadge({required this.loading, required this.onTap});
+
+  final bool loading;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Material(
+      color: colorScheme.primary.withValues(alpha: .88),
+      shape: const CircleBorder(),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: loading ? null : onTap,
+        customBorder: const CircleBorder(),
+        child: const SizedBox.square(
+          dimension: 28,
+          child: Center(
+            child: Icon(
+              Icons.music_video_rounded,
+              size: 16,
+              color: Colors.white,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _RadioStationRail extends StatelessWidget {
   const _RadioStationRail({
     super.key,
     required this.stations,
     required this.loadingStationId,
     required this.onTap,
+    this.onPlayMv,
   });
 
   final List<FmStation> stations;
   final String? loadingStationId;
   final ValueChanged<FmStation> onTap;
+
+  /// 「以 MV 播放」；null 时卡片不渲染 MV 入口。
+  final ValueChanged<FmStation>? onPlayMv;
 
   @override
   Widget build(BuildContext context) {
@@ -3592,6 +3762,7 @@ class _RadioStationRail extends StatelessWidget {
             stations: stations,
             loadingStationId: loadingStationId,
             onTap: onTap,
+            onPlayMv: onPlayMv,
           );
         }
         // 卡片内容高度充足（封面116 + 标题 + 副标题），轨道188彻底杜绝底部溢出且呼吸感匀称。
@@ -3609,6 +3780,7 @@ class _RadioStationRail extends StatelessWidget {
                   station: station,
                   loading: loadingStationId == station.id,
                   onTap: () => onTap(station),
+                  onPlayMv: onPlayMv == null ? null : () => onPlayMv!(station),
                 );
               },
             ),
@@ -3624,11 +3796,15 @@ class _RadioStationGrid extends StatelessWidget {
     required this.stations,
     required this.loadingStationId,
     required this.onTap,
+    this.onPlayMv,
   });
 
   final List<FmStation> stations;
   final String? loadingStationId;
   final ValueChanged<FmStation> onTap;
+
+  /// 「以 MV 播放」；null 时卡片不渲染 MV 入口。
+  final ValueChanged<FmStation>? onPlayMv;
 
   @override
   Widget build(BuildContext context) {
@@ -3659,6 +3835,7 @@ class _RadioStationGrid extends StatelessWidget {
               station: station,
               loading: loadingStationId == station.id,
               onTap: () => onTap(station),
+              onPlayMv: onPlayMv == null ? null : () => onPlayMv!(station),
               width: null,
             );
           },
@@ -3673,12 +3850,17 @@ class _RadioStationCard extends StatelessWidget {
     required this.station,
     required this.loading,
     required this.onTap,
+    this.onPlayMv,
     this.width = 132,
   });
 
   final FmStation station;
   final bool loading;
   final VoidCallback onTap;
+
+  /// 「以 MV 播放」角标；null 时整个 MV 入口不渲染。
+  final VoidCallback? onPlayMv;
+
   /// 横滑轨道传固定宽；网格传 null 让卡片撑满格子，封面随格宽自适应。
   final double? width;
 
@@ -3754,6 +3936,15 @@ class _RadioStationCard extends StatelessWidget {
                             bottom: 6,
                             child: _RadioPlayBadge(loading: loading, compact: true),
                           ),
+                          if (onPlayMv != null)
+                            Positioned(
+                              left: 6,
+                              top: 6,
+                              child: _StationMvBadge(
+                                loading: loading,
+                                onTap: onPlayMv!,
+                              ),
+                            ),
                         ],
                       );
                     },

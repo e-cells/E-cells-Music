@@ -264,6 +264,18 @@ void showPlayerMoreSheet({
         ),
       ),
       // List actions
+      // 观看 MV：把当前歌曲（连同播放队列）切成 MV 播放（歌曲 ⇄ MV 互切）。
+      if (song.source == SongSource.kugou)
+        SongSheetAction(
+          icon: Icons.music_video_rounded,
+          title: '观看 MV',
+          subtitle: '切换为视频播放',
+          onTap: () => watchMvWithFeedback(
+            context: context,
+            song: song,
+            songs: player.queue,
+          ),
+        ),
       SongSheetAction(
         icon: Icons.auto_awesome_rounded,
         title: '高潮',

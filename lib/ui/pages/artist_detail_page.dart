@@ -1,11 +1,15 @@
+import 'dart:async' show unawaited;
+
 import 'package:flutter/material.dart';
 
 import '../../controllers/auth_controller.dart';
+import '../../controllers/mv_player_controller.dart';
 import '../../controllers/player_controller.dart';
 import '../../models/music_models.dart';
 import '../../services/music_api.dart';
 import '../widgets/artwork.dart';
 import '../widgets/mini_player.dart';
+import '../widgets/mv_card.dart';
 import '../widgets/song_action_sheets.dart';
 import '../widgets/album_grid.dart';
 import '../widgets/app_song_row.dart';
@@ -13,6 +17,7 @@ import '../widgets/desktop_song_table_row.dart';
 import '../adaptive_layout.dart';
 import '../form_factor.dart';
 import '../player/song_tap_handler.dart';
+import 'mv_player_page.dart';
 import 'playlist_detail_page.dart';
 
 class ArtistDetailPage extends StatefulWidget {
@@ -33,7 +38,7 @@ class ArtistDetailPage extends StatefulWidget {
   State<ArtistDetailPage> createState() => _ArtistDetailPageState();
 }
 
-enum _ArtistTab { songs, albums }
+enum _ArtistTab { songs, albums, mvs }
 
 class _ArtistDetailPageState extends State<ArtistDetailPage> {
   static const _pageSize = 30;
@@ -47,6 +52,14 @@ class _ArtistDetailPageState extends State<ArtistDetailPage> {
   final _scrollController = ScrollController();
   final _songs = <Song>[];
   final _albums = <ArtistAlbum>[];
+
+  // ===== MV tab：按 tag 懒加载的分页列表 =====
+  final _mvs = <MvInfo>[];
+  var _mvTag = 'all';
+  var _mvPage = 1;
+  var _mvHasMore = true;
+  var _mvLoading = false;
+  var _mvLoadedForTag = '';
 
   _ArtistTab _selectedTab = _ArtistTab.songs;
   bool _isProgressiveLoading = false;
@@ -289,6 +302,72 @@ class _ArtistDetailPageState extends State<ArtistDetailPage> {
     }
   }
 
+  // ===== MV tab：懒加载（首次切到 MV tab 才请求） =====
+
+  void _ensureMvsLoaded() {
+    if (_mvLoadedForTag == _mvTag && _mvs.isNotEmpty) return;
+    unawaited(_loadMvs(refresh: true));
+  }
+
+  void _switchMvTag(String tag) {
+    if (_mvTag == tag) return;
+    setState(() => _mvTag = tag);
+    unawaited(_loadMvs(refresh: true));
+  }
+
+  Future<void> _loadMvs({bool refresh = false}) async {
+    final artistId = _resolvedArtistId ?? widget.artist.id;
+    if (artistId.isEmpty || _mvLoading) return;
+    final page = refresh ? 1 : _mvPage;
+    setState(() {
+      _mvLoading = true;
+      if (refresh) {
+        _mvs.clear();
+        _mvHasMore = true;
+      }
+    });
+    try {
+      final mvs = await widget.api.artistMvs(
+        artistId,
+        page: page,
+        pageSize: _pageSize,
+        tag: _mvTag,
+      );
+      if (!mounted) return;
+      setState(() {
+        if (page == 1) {
+          _mvs
+            ..clear()
+            ..addAll(mvs);
+        } else {
+          _mvs.addAll(mvs);
+        }
+        _mvPage = page + 1;
+        _mvHasMore = mvs.length >= _pageSize;
+        _mvLoadedForTag = _mvTag;
+      });
+    } catch (_) {
+      // MV 列表失败降级为空态，不阻塞歌曲/专辑。
+      if (mounted) setState(() => _mvHasMore = false);
+    } finally {
+      if (mounted) setState(() => _mvLoading = false);
+    }
+  }
+
+  /// 播放歌手 MV：当前列表作为队列（与歌曲点播同构）。
+  void _playMv(MvInfo mv) {
+    final mvPlayer = MvPlayerController.instance;
+    if (MvInfo.isSameMv(mvPlayer.currentMv, mv) && mvPlayer.hasActiveSession) {
+      if (!mvPlayer.isPlaying && !mvPlayer.isPreparing) {
+        unawaited(mvPlayer.togglePlay());
+      }
+      unawaited(MvPlayerPage.open(context, mvPlayer: mvPlayer));
+      return;
+    }
+    unawaited(mvPlayer.playMv(mv, queue: List<MvInfo>.of(_mvs)));
+    unawaited(MvPlayerPage.open(context, mvPlayer: mvPlayer));
+  }
+
   void _openAlbum(ArtistAlbum album) {
     // 路由防重入：桌面端双击会连续触发两次 onTap，600ms 内只 push 一次，
     // 避免叠两层相同专辑页。
@@ -515,9 +594,11 @@ class _ArtistDetailPageState extends State<ArtistDetailPage> {
                         selectedTab: _selectedTab,
                         songsCount: _songs.length,
                         albumsCount: _albums.length,
+                        mvsCount: _mvs.length,
                         onTabSelected: (tab) {
                           if (_selectedTab != tab) {
                             setState(() => _selectedTab = tab);
+                            if (tab == _ArtistTab.mvs) _ensureMvsLoaded();
                           }
                         },
                       ),
@@ -704,6 +785,82 @@ class _ArtistDetailPageState extends State<ArtistDetailPage> {
                           onTap: _openAlbum,
                           sectionSidePadding: isDesktopFormFactor ? 18 : 16,
                         ),
+                    ] else if (_selectedTab == _ArtistTab.mvs) ...[
+                      // tag 筛选 + 播放全部 + MV 卡片网格。
+                      SliverToBoxAdapter(
+                        child: _MvSectionHeader(
+                          tag: _mvTag,
+                          onTagChanged: _switchMvTag,
+                          count: _mvs.length,
+                          onPlayAll: _mvs.isEmpty
+                              ? null
+                              : () => _playMv(_mvs.first),
+                          loading: _mvLoading,
+                        ),
+                      ),
+                      if (_mvLoading && _mvs.isEmpty)
+                        const SliverFillRemaining(
+                          hasScrollBody: false,
+                          child: Center(child: CircularProgressIndicator()),
+                        )
+                      else if (_mvs.isEmpty)
+                        SliverFillRemaining(
+                          hasScrollBody: false,
+                          child: Center(
+                            child: Padding(
+                              padding: const EdgeInsets.all(32),
+                              child: Text(
+                                '暂无 MV',
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                          ),
+                        )
+                      else ...[
+                        SliverPadding(
+                          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                          sliver: SliverGrid(
+                            gridDelegate:
+                                const SliverGridDelegateWithMaxCrossAxisExtent(
+                              maxCrossAxisExtent: 280,
+                              mainAxisSpacing: 14,
+                              crossAxisSpacing: 12,
+                              childAspectRatio: 16 / 11.6,
+                            ),
+                            delegate: SliverChildBuilderDelegate(
+                              (context, index) {
+                                final mv = _mvs[index];
+                                return MvCard(
+                                  mv: mv,
+                                  onTap: () => _playMv(mv),
+                                );
+                              },
+                              childCount: _mvs.length,
+                            ),
+                          ),
+                        ),
+                        if (_mvHasMore)
+                          SliverToBoxAdapter(
+                            child: Center(
+                              child: TextButton(
+                                onPressed: _mvLoading
+                                    ? null
+                                    : () => _loadMvs(),
+                                child: _mvLoading
+                                    ? const SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Text('加载更多'),
+                              ),
+                            ),
+                          ),
+                      ],
                     ],
                     // 底部留白：移动端播放中时为 MiniPlayer 预留空间，
                     // 防止卡片遮挡导致用户点不到最底部的几首歌。
@@ -898,6 +1055,89 @@ class _SongSectionHeader extends StatelessWidget {
                 visualDensity: VisualDensity.compact,
               ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+/// MV tab 头部：tag 筛选 chips + 播放全部。
+class _MvSectionHeader extends StatelessWidget {
+  const _MvSectionHeader({
+    required this.tag,
+    required this.onTagChanged,
+    required this.count,
+    required this.onPlayAll,
+    required this.loading,
+  });
+
+  final String tag;
+  final ValueChanged<String> onTagChanged;
+  final int count;
+  final VoidCallback? onPlayAll;
+  final bool loading;
+
+  static const _tags = {
+    'all': '全部',
+    'official': '官方',
+    'live': '现场',
+    'fan': '饭制',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(18, 4, 18, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  count == 0 ? 'MV' : 'MV $count',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: isDesktopFormFactor
+                        ? FontWeight.w700
+                        : FontWeight.w900,
+                  ),
+                ),
+              ),
+              if (loading)
+                const Padding(
+                  padding: EdgeInsets.only(right: 8),
+                  child: SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              TextButton.icon(
+                onPressed: onPlayAll,
+                icon: const Icon(Icons.play_arrow_rounded),
+                label: const Text('播放全部'),
+                style: TextButton.styleFrom(
+                  foregroundColor: colorScheme.primary,
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 8,
+            children: [
+              for (final entry in _tags.entries)
+                ChoiceChip(
+                  label: Text(entry.value),
+                  selected: tag == entry.key,
+                  onSelected: (_) => onTagChanged(entry.key),
+                  visualDensity: VisualDensity.compact,
+                  showCheckmark: false,
+                ),
+            ],
+          ),
         ],
       ),
     );
@@ -1260,12 +1500,14 @@ class _ArtistTabHeaderDelegate extends SliverPersistentHeaderDelegate {
     required this.selectedTab,
     required this.songsCount,
     required this.albumsCount,
+    required this.mvsCount,
     required this.onTabSelected,
   });
 
   final _ArtistTab selectedTab;
   final int songsCount;
   final int albumsCount;
+  final int mvsCount;
   final ValueChanged<_ArtistTab> onTabSelected;
 
   @override
@@ -1311,6 +1553,13 @@ class _ArtistTabHeaderDelegate extends SliverPersistentHeaderDelegate {
             isSelected: selectedTab == _ArtistTab.albums,
             onTap: () => onTabSelected(_ArtistTab.albums),
           ),
+          const SizedBox(width: 8),
+          _ArtistTabItem(
+            label: 'MV',
+            count: mvsCount,
+            isSelected: selectedTab == _ArtistTab.mvs,
+            onTap: () => onTabSelected(_ArtistTab.mvs),
+          ),
         ],
       ),
     );
@@ -1320,7 +1569,8 @@ class _ArtistTabHeaderDelegate extends SliverPersistentHeaderDelegate {
   bool shouldRebuild(covariant _ArtistTabHeaderDelegate oldDelegate) {
     return oldDelegate.selectedTab != selectedTab ||
         oldDelegate.songsCount != songsCount ||
-        oldDelegate.albumsCount != albumsCount;
+        oldDelegate.albumsCount != albumsCount ||
+        oldDelegate.mvsCount != mvsCount;
   }
 }
 

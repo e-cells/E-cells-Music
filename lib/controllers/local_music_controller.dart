@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../core/folder_filter.dart';
 import '../models/music_models.dart';
@@ -214,7 +217,8 @@ class LocalMusicController extends ChangeNotifier {
                 rawTitle: rawTitle,
                 artist: artist,
                 hash: filePath,
-                coverUrl: item['albumArtUri'] as String?,
+                coverUrl: _resolvedCovers[filePath] ??
+                    item['albumArtUri'] as String?,
                 duration: durationMs != null
                     ? Duration(milliseconds: durationMs)
                     : null,
@@ -268,6 +272,122 @@ class LocalMusicController extends ChangeNotifier {
       debugPrint('Error getting embedded lyrics: $e');
       return null;
     }
+  }
+
+  final Map<String, String> _resolvedCovers = {};
+
+  /// 查询某首本地歌曲已解析出的封面路径（内嵌缓存或网络匹配）。
+  String? getResolvedCover(String songId) => _resolvedCovers[songId];
+
+  /// 更新本地歌曲的封面（例如提取到内嵌封面或联网匹配成功后调用）。
+  void updateSongCover(String songId, String coverUrl) {
+    if (coverUrl.isEmpty) return;
+    _resolvedCovers[songId] = coverUrl;
+    var changed = false;
+    final updated = <Song>[];
+    for (final s in _rawSongs) {
+      if (s.id == songId) {
+        if (s.coverUrl != coverUrl) changed = true;
+        updated.add(s.copyWith(coverUrl: coverUrl));
+      } else {
+        updated.add(s);
+      }
+    }
+    _rawSongs = updated;
+    if (changed) {
+      _applyFolderFilter();
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  /// 获取本地音频的内嵌封面图片字节（Android 优先走 MediaMetadataRetriever）。
+  Future<Uint8List?> getEmbeddedPicture(String filePath) async {
+    if (!Platform.isAndroid) return null;
+    try {
+      return await _channel.invokeMethod<Uint8List>('getEmbeddedPicture', {
+        'filePath': filePath,
+      });
+    } catch (e) {
+      debugPrint('Error getting embedded picture: $e');
+      return null;
+    }
+  }
+
+  /// 检查并提取本地歌曲的内嵌封面。
+  ///
+  /// 若本地音频具有内嵌图片（ID3 APIC / FLAC PICTURE / MediaStore albumart），
+  /// 将其写入本地缓存目录并返回本地图片路径；若无内嵌封面，返回 null。
+  Future<String?> getOrExtractEmbeddedCover(Song song) async {
+    // 0. 若已解析过封面，且属于本地文件
+    final resolved = _resolvedCovers[song.id];
+    if (resolved != null && resolved.isNotEmpty) {
+      if (!resolved.startsWith('http://') && !resolved.startsWith('https://')) {
+        return resolved;
+      }
+    }
+
+    // 1. 若当前 coverUrl 已经是有效本地图片文件路径
+    final cur = song.coverUrl;
+    if (cur != null && cur.isNotEmpty) {
+      if (cur.startsWith('file://')) {
+        final path = Uri.parse(cur).toFilePath();
+        if (await File(path).exists()) {
+          _resolvedCovers[song.id] = cur;
+          return cur;
+        }
+      } else if (!cur.startsWith('http://') &&
+          !cur.startsWith('https://') &&
+          !cur.startsWith('content://')) {
+        if (await File(cur).exists()) {
+          _resolvedCovers[song.id] = cur;
+          return cur;
+        }
+      }
+    }
+
+    // 2. 检查缓存目录中是否已经生成过该文件的内嵌封面
+    try {
+      final cacheDir = await getApplicationCacheDirectory();
+      final coverDir = Directory('${cacheDir.path}/embedded_covers');
+      if (!await coverDir.exists()) {
+        await coverDir.create(recursive: true);
+      }
+      final hashStr = md5.convert(utf8.encode(song.id)).toString();
+      final cachedFile = File('${coverDir.path}/$hashStr.jpg');
+      if (await cachedFile.exists() && await cachedFile.length() > 0) {
+        final filePath = cachedFile.path;
+        _resolvedCovers[song.id] = filePath;
+        updateSongCover(song.id, filePath);
+        return filePath;
+      }
+
+      // 3. 优先尝试从音频文件直接读取内嵌图片字节
+      Uint8List? bytes = await getEmbeddedPicture(song.id);
+
+      // 4. 若直接提取为空，且有系统 albumArtUri，尝试从 MediaStore albumart 提取
+      if (bytes == null && cur != null && cur.startsWith('content://')) {
+        final albumId = int.tryParse(cur.split('/').last);
+        if (albumId != null && albumId > 0) {
+          bytes = await _channel.invokeMethod<Uint8List>('getAlbumArt', {
+            'albumId': albumId,
+            'filePath': song.id,
+          });
+        }
+      }
+
+      // 5. 若成功提取到内嵌图片字节，落盘缓存并返回文件路径
+      if (bytes != null && bytes.isNotEmpty) {
+        await cachedFile.writeAsBytes(bytes);
+        final filePath = cachedFile.path;
+        _resolvedCovers[song.id] = filePath;
+        updateSongCover(song.id, filePath);
+        return filePath;
+      }
+    } catch (e) {
+      debugPrint('Error extracting embedded cover: $e');
+    }
+
+    return null;
   }
 
   // ---- 桌面（Windows/Linux）本地音乐 ----
@@ -409,7 +529,7 @@ class LocalMusicController extends ChangeNotifier {
       artist: artist,
       albumName: entry.album.isNotEmpty ? entry.album : null,
       hash: entry.path,
-      coverUrl: null,
+      coverUrl: _resolvedCovers[entry.path],
       duration: entry.durationMs > 0
           ? Duration(milliseconds: entry.durationMs.toInt())
           : null,

@@ -13,6 +13,7 @@ import 'package:local_notifier/local_notifier.dart';
 import 'config/app_config.dart';
 import 'controllers/auth_controller.dart';
 import 'controllers/download_controller.dart';
+import 'controllers/mv_player_controller.dart';
 import 'controllers/player_controller.dart';
 import 'controllers/local_music_controller.dart';
 import 'controllers/theme_controller.dart';
@@ -39,6 +40,7 @@ import 'ui/app_theme.dart';
 import 'ui/form_factor.dart';
 import 'ui/pages/app_shell.dart';
 import 'ui/pages/login_page.dart';
+import 'ui/widgets/mv_mini_bar.dart';
 import 'ui/widgets/song_action_sheets.dart' show likeFailureMessage;
 import 'ui/widgets/toast.dart';
 
@@ -256,6 +258,7 @@ class _ShiyinAppState extends State<ShiyinApp> with WidgetsBindingObserver {
   late final PlayerController _player;
   late final ThemeController _theme;
   late final LocalMusicController _localMusic;
+  late final MvPlayerController _mvPlayer;
 
   /// 主窗标题随播放（仅桌面形态创建并绑定）。
   DesktopWindowTitleBinder? _windowTitleBinder;
@@ -313,6 +316,15 @@ class _ShiyinAppState extends State<ShiyinApp> with WidgetsBindingObserver {
       ..cacheService = _cacheService
       ..localMusic = _localMusic
       ..vipClaim = _auth.vipClaim;
+    // MV 播放系统（与歌曲播放器平行）。双向互斥：MV 起播暂停歌曲、
+    // 歌曲起播暂停 MV——两侧各持一个回调钩子，晚绑定避免构造顺序依赖。
+    _mvPlayer = MvPlayerController(_api);
+    _mvPlayer.onPauseSongPlayer = () => unawaited(_player.pause());
+    _player.onPauseMvPlayer = () => unawaited(_mvPlayer.pause());
+    // 「切换为音频」：MV 侧不持有 PlayerController（两套系统解耦），
+    // 经回调把 MV 对应的歌曲交回歌曲播放器续播。
+    _mvPlayer.onPlaySong = (song, queue, initialPosition) =>
+        _player.playSong(song, queue: queue, initialPosition: initialPosition);
     // 在播保护：清理/裁剪播放缓存时跳过当前歌曲本地文件（删了播一半 404）。
     // 闭包惰性求值，_player 已赋值后才会被调用，无 late 空窗。
     _downloads.playingPathProvider = () {
@@ -437,6 +449,7 @@ class _ShiyinAppState extends State<ShiyinApp> with WidgetsBindingObserver {
     // 否则流永久关闭（事件失聪、二次 dispose 抛错、widget 测试 flake）。
     // stop() 已取消订阅，足以释放资源。
     _auth.dispose();
+    _mvPlayer.dispose();
     _player.dispose();
     _downloads.dispose();
     _localMusic.dispose();
@@ -471,6 +484,7 @@ class _ShiyinAppState extends State<ShiyinApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
+    _mvPlayer.handleAppLifecycleState(state);
     switch (state) {
       // 桌面歌词不再监听前后台：Android（易格方案）开启即常显，
       // PC 本就与前后台无关。旧版 setAppForeground 前后台同步已随
@@ -548,6 +562,9 @@ class _ShiyinAppState extends State<ShiyinApp> with WidgetsBindingObserver {
             if (Platform.isWindows) {
               result = ExcludeSemantics(child: result);
             }
+            // 全局 MV 迷你条：MV 在播且播放页不在前台时悬浮于底部，
+            // 点击返回 MV 画面（MV 像歌曲一样可后台续播）。
+            result = MvPlayerOverlayHost(mvPlayer: _mvPlayer, child: result);
             return result;
           },
           home: AnimatedBuilder(

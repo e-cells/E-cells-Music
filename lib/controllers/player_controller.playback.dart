@@ -54,6 +54,8 @@ mixin _PlayerPlayback on _PlayerControllerBase {
     Duration? initialPosition,
     bool preserveClimax = false,
   }) async {
+    // 歌曲与 MV 互斥：歌曲起播先停 MV（视频/音频焦点不打架）。
+    onPauseMvPlayer?.call();
     final isSameSong = currentSong?.hash == song.hash;
     if (!preserveClimax) {
       _climaxEndTime = null;
@@ -138,6 +140,10 @@ mixin _PlayerPlayback on _PlayerControllerBase {
     );
     // 预缓存封面图，避免打开播放页时出现纯色背景闪烁
     _precacheCover(song);
+    // 本地歌曲播放时检查内嵌封面，若无内嵌封面则联网匹配封面
+    if (song.source == SongSource.local) {
+      unawaited(_resolveLocalSongArtwork(song));
+    }
     unawaited(_syncDesktopLyricsVisibility());
     // 切歌:取消上一首可能在途的响度分析,避免旧分析空跑占 CPU。
     // 序号守卫也会丢弃旧结果,但取消能立即停掉原生解码线程。
@@ -669,11 +675,17 @@ mixin _PlayerPlayback on _PlayerControllerBase {
     final coverUrl = song.coverUrl;
     if (coverUrl == null || coverUrl.isEmpty) return;
     if (coverUrl.startsWith('content://')) return;
-    final provider = ResizeImage(
-      NetworkImage(coverUrl),
-      width: 150,
-      height: 150,
-    );
+    final ImageProvider provider;
+    if (coverUrl.startsWith('file://') ||
+        coverUrl.startsWith('/') ||
+        (coverUrl.length > 2 && coverUrl[1] == ':')) {
+      final path = coverUrl.startsWith('file://')
+          ? Uri.parse(coverUrl).toFilePath()
+          : coverUrl;
+      provider = ResizeImage(FileImage(File(path)), width: 150, height: 150);
+    } else {
+      provider = ResizeImage(NetworkImage(coverUrl), width: 150, height: 150);
+    }
     // listener 必须在拿到图/出错后自摘（与 precacheImage 内部同款）：
     // 常驻监听会让 ImageStreamCompleter 永远判定为 live，解码后的封面
     // 脱离 ImageCache 的 LRU 淘汰，长会话播放数百首后内存持续累积。
@@ -684,6 +696,64 @@ mixin _PlayerPlayback on _PlayerControllerBase {
       onError: (_, _) => stream.removeListener(listener),
     );
     stream.addListener(listener);
+  }
+
+  @override
+  void _applyResolvedLocalCover(Song song, String coverUrl) {
+    if (coverUrl.isEmpty) return;
+    localMusic?.updateSongCover(song.id, coverUrl);
+    if (currentSong?.hash == song.hash) {
+      currentSong = currentSong!.copyWith(coverUrl: coverUrl);
+      _precacheCover(currentSong!);
+      // 通知系统媒体通知栏/锁屏封面
+      _audioHandler.updateCurrentSong(currentSong!);
+      notifyListeners();
+    }
+  }
+
+  Future<void> _resolveLocalSongArtwork(Song song) async {
+    if (song.source != SongSource.local) return;
+
+    // 1. 检查本地音频是否有内嵌封面
+    final embeddedPath = await localMusic?.getOrExtractEmbeddedCover(song);
+    if (embeddedPath != null && embeddedPath.isNotEmpty) {
+      _applyResolvedLocalCover(song, embeddedPath);
+      return;
+    }
+
+    // 2. 若无内嵌封面，先查缓存（此前若已为该歌曲匹配过网络封面）
+    final cacheKey = 'cache_local_cover_${song.hash}';
+    final cache = cacheService;
+    if (cache != null) {
+      try {
+        final cached = await cache.read<String>(
+          cacheKey,
+          decode: (json) => json['cover'] as String? ?? '',
+          ttl: const Duration(days: 30),
+        );
+        if (cached != null && cached.data.isNotEmpty) {
+          _applyResolvedLocalCover(song, cached.data);
+          return;
+        }
+      } catch (_) {}
+    }
+
+    // 3. 本地无内嵌封面且无缓存：联网匹配封面！
+    try {
+      final candidates = await _searchLocalSongCandidates(song);
+      final best = _findBestLocalMatch(candidates, song);
+      if (best != null && best.coverUrl != null && best.coverUrl!.isNotEmpty) {
+        final coverUrl = best.coverUrl!;
+        _applyResolvedLocalCover(song, coverUrl);
+        if (cache != null) {
+          unawaited(
+            cache.write(cacheKey, {'cover': coverUrl}).catchError((Object _) {}),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Failed to match online cover for local song: $e');
+    }
   }
 
   /// 解析播放地址。
@@ -716,7 +786,7 @@ mixin _PlayerPlayback on _PlayerControllerBase {
       // 返回空地址：按智能音质策略降级重试
       final fallback = PlayerQualityLogic.nextLowerQuality(audioQuality);
       if (fallback == null) return playUrl;
-      return _api.songUrl(song, quality: fallback);
+      return await _api.songUrl(song, quality: fallback);
     } catch (error) {
       if (!smartQualityEnabled) rethrow;
       // 网络请求失败：尝试降级重试
@@ -785,6 +855,13 @@ mixin _PlayerPlayback on _PlayerControllerBase {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble(_playbackSpeedSettingKey, clamped);
     notifyListeners();
+  }
+
+  /// 暂停播放（仅暂停，不做恢复语义；供 MV 起播互斥等外部场景调用）。
+  Future<void> pause() async {
+    if (isPlaying) {
+      await _audioHandler.pause();
+    }
   }
 
   @override

@@ -377,7 +377,10 @@ class PosterActionRail extends StatelessWidget {
         // 3. 下载
         _buildDownloadButton(context),
 
-        // 4. 评论
+        // 4. 观看 MV（歌曲 ⇄ MV 互切；反查走酷狗 id 体系，非酷狗源禁用）
+        _MvSwitchButton(player: player, song: song),
+
+        // 5. 评论
         PlayerCommentButton(
           player: player,
           song: song,
@@ -385,6 +388,56 @@ class PosterActionRail extends StatelessWidget {
           iconColor: Colors.white.withValues(alpha: .85),
         ),
       ],
+    );
+  }
+}
+
+/// 「观看 MV」按钮：把当前歌曲（连同播放队列）切成 MV 播放。
+///
+/// 匹配期间按钮转菊花，防止重复触发「正在匹配 MV」任务。
+class _MvSwitchButton extends StatefulWidget {
+  const _MvSwitchButton({required this.player, required this.song});
+
+  final PlayerController player;
+  final Song song;
+
+  @override
+  State<_MvSwitchButton> createState() => _MvSwitchButtonState();
+}
+
+class _MvSwitchButtonState extends State<_MvSwitchButton> {
+  bool _switching = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = widget.song.source == SongSource.kugou;
+    return IconButton(
+      iconSize: 24,
+      tooltip: '观看 MV',
+      icon: _switching
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.music_video_rounded),
+      color: enabled
+          ? Colors.white.withValues(alpha: .85)
+          : Colors.white.withValues(alpha: .3),
+      onPressed: enabled && !_switching
+          ? () async {
+              setState(() => _switching = true);
+              try {
+                await watchMvWithFeedback(
+                  context: context,
+                  song: widget.song,
+                  songs: widget.player.queue,
+                );
+              } finally {
+                if (mounted) setState(() => _switching = false);
+              }
+            }
+          : null,
     );
   }
 }

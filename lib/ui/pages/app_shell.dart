@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../../controllers/auth_controller.dart';
 import '../../controllers/download_controller.dart';
+import '../../controllers/mv_player_controller.dart';
 import '../../controllers/player_controller.dart';
 import '../../controllers/theme_controller.dart';
 import '../../controllers/local_music_controller.dart';
@@ -23,6 +24,7 @@ import '../form_factor.dart';
 import '../player/player_route.dart';
 import 'home_page.dart';
 import 'library_page.dart';
+import 'mv_player_page.dart';
 import 'search_page.dart';
 import 'settings_page.dart';
 
@@ -687,6 +689,11 @@ class CenterDisc extends StatelessWidget {
   final AuthController auth;
 
   void _openPlayer(BuildContext context) {
+    final mvPlayer = MvPlayerController.instance;
+    if (mvPlayer.hasActiveSession && !player.isPlaying) {
+      unawaited(MvPlayerPage.open(context, mvPlayer: mvPlayer));
+      return;
+    }
     // 无歌曲时不进播放页：首次安装尚未播放，直接给轻提示，避免白屏。
     if (player.currentSong == null) {
       Toast.info('先去挑选一首喜欢的歌曲吧');

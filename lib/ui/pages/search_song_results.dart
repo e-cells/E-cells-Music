@@ -134,6 +134,16 @@ class SearchSongResults extends StatelessWidget {
             song: song,
           ),
         ),
+        if (!isExternal)
+          SongSheetAction(
+            icon: Icons.music_video_rounded,
+            title: '观看 MV',
+            onTap: () => watchMvWithFeedback(
+              context: context,
+              song: song,
+              songs: songs,
+            ),
+          ),
         if (!isExternal) ...[
           SongSheetAction(
             icon: Icons.playlist_add_rounded,

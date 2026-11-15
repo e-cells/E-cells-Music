@@ -271,6 +271,22 @@ class LandscapeHeader extends StatelessWidget {
               ],
             ),
           ),
+          // 观看 MV（歌曲 ⇄ MV 互切）：车机触控尺寸；MV 反查走酷狗 id
+          // 体系，非酷狗源不展示（与「更多」面板里的入口同一约束）。
+          if (!isDesktopFormFactor && song.source == SongSource.kugou) ...[
+            LandscapeHeaderButton(
+              tooltip: '观看 MV',
+              size: compact ? 38 : 44,
+              iconSize: compact ? 22 : 24,
+              onPressed: () => watchMvWithFeedback(
+                context: context,
+                song: song,
+                songs: player.queue,
+              ),
+              icon: Icons.music_video_rounded,
+            ),
+            SizedBox(width: compact ? 8 : 12),
+          ],
           if (!isDesktopFormFactor)
             Builder(
               builder: (moreButtonContext) => LandscapeHeaderButton(

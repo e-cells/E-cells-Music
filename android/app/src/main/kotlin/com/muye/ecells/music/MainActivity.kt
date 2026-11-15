@@ -330,16 +330,38 @@ class MainActivity : AudioServiceActivity() {
                     }
                     "getAlbumArt" -> {
                         val albumId = call.argument<Number>("albumId")?.toLong()
-                        if (albumId == null || albumId <= 0) {
+                        val filePath = call.argument<String>("filePath")
+                        if ((albumId == null || albumId <= 0) && filePath.isNullOrEmpty()) {
                             result.success(null)
                             return@setMethodCallHandler
                         }
                         runCatching {
-                            getAlbumArtBytes(albumId)
+                            var bytes: ByteArray? = null
+                            if (albumId != null && albumId > 0) {
+                                bytes = getAlbumArtBytes(albumId)
+                            }
+                            if (bytes == null && !filePath.isNullOrEmpty()) {
+                                bytes = getEmbeddedPicture(filePath)
+                            }
+                            bytes
                         }.onSuccess { bytes ->
                             result.success(bytes)
                         }.onFailure { error ->
                             result.error("album_art_failed", error.message, null)
+                        }
+                    }
+                    "getEmbeddedPicture" -> {
+                        val filePath = call.argument<String>("filePath")
+                        if (filePath.isNullOrEmpty()) {
+                            result.success(null)
+                            return@setMethodCallHandler
+                        }
+                        runCatching {
+                            getEmbeddedPicture(filePath)
+                        }.onSuccess { bytes ->
+                            result.success(bytes)
+                        }.onFailure { error ->
+                            result.error("embedded_picture_failed", error.message, null)
                         }
                     }
                     "getEmbeddedLyrics" -> {
@@ -1406,16 +1428,37 @@ class MainActivity : AudioServiceActivity() {
         }
     }
 
-    private fun getEmbeddedLyrics(filePath: String): String? {
+    private fun getEmbeddedPicture(filePath: String): ByteArray? {
+        val retriever = android.media.MediaMetadataRetriever()
         return try {
-            val retriever = android.media.MediaMetadataRetriever()
-            retriever.setDataSource(filePath)
+            if (filePath.startsWith("content://")) {
+                retriever.setDataSource(this, Uri.parse(filePath))
+            } else {
+                retriever.setDataSource(filePath)
+            }
+            retriever.embeddedPicture
+        } catch (e: Exception) {
+            null
+        } finally {
+            runCatching { retriever.release() }
+        }
+    }
+
+    private fun getEmbeddedLyrics(filePath: String): String? {
+        val retriever = android.media.MediaMetadataRetriever()
+        return try {
+            if (filePath.startsWith("content://")) {
+                retriever.setDataSource(this, Uri.parse(filePath))
+            } else {
+                retriever.setDataSource(filePath)
+            }
             // METADATA_KEY_LYRICS = 26，API 29+ 才有常量名，直接用数字 key 兼容旧版本
             val lyrics = retriever.extractMetadata(26)
-            retriever.release()
             lyrics
         } catch (e: Exception) {
             null
+        } finally {
+            runCatching { retriever.release() }
         }
     }
 

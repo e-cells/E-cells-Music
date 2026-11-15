@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../../config/app_config.dart';
 import '../../controllers/auth_controller.dart';
+import '../../controllers/mv_player_controller.dart';
 import '../../controllers/player_controller.dart';
 import '../../core/pinyin_utils.dart';
 import '../../models/music_models.dart';
@@ -1251,6 +1252,16 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
             song: song,
           ),
         ),
+        if (song.source == SongSource.kugou)
+          SongSheetAction(
+            icon: Icons.music_video_rounded,
+            title: '观看 MV',
+            onTap: () => watchMvWithFeedback(
+              context: context,
+              song: song,
+              songs: _playbackQueueNow(),
+            ),
+          ),
         SongSheetAction(
           icon: Icons.playlist_add_rounded,
           title: '添加到歌单',
@@ -1309,6 +1320,21 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
     final first = queue.first;
     widget.player.playSong(first, queue: List<Song>.of(queue));
     _expandQueueInBackgroundIfNeeded(startedWith: first);
+  }
+
+  /// 以 MV 播放整个歌单（收藏歌单同理）：批量把歌曲匹配为 MV 队列，
+  /// 无 MV 的歌剔除；首个 MV 起播即跳转、后台继续补队列。
+  Future<void> _playAllMv() async {
+    final songs = _playbackQueueNow();
+    if (songs.isEmpty) return;
+    if (MvPlayerController.instance.isResolvingQueue) return;
+    Toast.info('正在匹配歌单 MV…');
+    await watchMvWithFeedback(
+      context: context,
+      song: songs.first,
+      songs: songs,
+      noMvMessage: '歌单里的歌曲暂无 MV',
+    );
   }
 
   /// Hero 区「下载」：补全全量后整单入队，复用批量下载的并发 guard。
@@ -1706,6 +1732,7 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
                                         canPlay:
                                             _playbackQueueNow().isNotEmpty,
                                         onPlay: _playAll,
+                                        onPlayMv: _playAllMv,
                                         onSearch: _toggleSearch,
                                         onSort: () => _showSortSheet(context),
                                         selectEnabled:
@@ -1748,6 +1775,7 @@ class _PlaylistDetailPageState extends State<PlaylistDetailPage> {
                               subtitle: stickySubtitle,
                               canPlay: _playbackQueueNow().isNotEmpty,
                               onPlay: _playAll,
+                              onPlayMv: _playAllMv,
                               onSearch: _toggleSearch,
                               onSort: () => _showSortSheet(context),
                               selectEnabled: _songs.isNotEmpty || _hasMore,
@@ -2900,6 +2928,38 @@ class StickyHeaderDelegate extends SliverPersistentHeaderDelegate {
 
 typedef _StickyHeaderDelegate = StickyHeaderDelegate;
 
+/// 「以 MV 播放」小圆钮：与播放键同形制，music_video 图标区分。
+class _MvPlayButton extends StatelessWidget {
+  const _MvPlayButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Material(
+      color: colorScheme.primary.withValues(alpha: .14),
+      shape: const CircleBorder(),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onPressed,
+        mouseCursor: SystemMouseCursors.click,
+        customBorder: const CircleBorder(),
+        child: SizedBox.square(
+          dimension: 40,
+          child: Center(
+            child: Icon(
+              Icons.music_video_rounded,
+              size: 22,
+              color: colorScheme.primary,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// 参考图4的粘性歌曲条：左侧蓝色播放 pill，
 /// 中间两行计数（标题+副标题各自省略，窄屏不再挤没「已加载」），
 /// 右侧搜索/排序/多选三个幽灵图标。多选模式下切换为已选计数+全选。
@@ -2927,6 +2987,7 @@ class ListStickyBar extends StatelessWidget {
     required this.onSelect,
     this.flatTop = false,
     this.topRadiusOverride,
+    this.onPlayMv,
   });
 
   final bool selecting;
@@ -2944,6 +3005,9 @@ class ListStickyBar extends StatelessWidget {
   final VoidCallback onSelect;
   final bool flatTop;
   final double? topRadiusOverride;
+
+  /// 「以 MV 播放全部」：非 null 时播放键旁显示 MV 图标按钮。
+  final VoidCallback? onPlayMv;
 
   @override
   Widget build(BuildContext context) {
@@ -3058,6 +3122,10 @@ class ListStickyBar extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 12),
+                if (onPlayMv != null) ...[
+                  _MvPlayButton(onPressed: onPlayMv!),
+                  const SizedBox(width: 12),
+                ],
                 Expanded(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,

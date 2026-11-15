@@ -43,7 +43,10 @@ pub async fn singer_list(
     transport::send(client, session, &req).await
 }
 
-#[allow(dead_code)]
+/// 歌手 MV 列表（GET openapicdn /kmr/v1/author/videos）。
+///
+/// tag: official(官方,tag_idx=18) / live(现场,20) / fan(饭制,23) /
+/// artist(歌手发布,42419) / 其他视为全部（tag_idx 空）。
 pub async fn artist_videos(
     client: &reqwest::Client,
     session: &KgSession,

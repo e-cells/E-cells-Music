@@ -587,6 +587,11 @@ class MusicAudioHandler extends BaseAudioHandler
     }
   }
 
+  /// 当歌曲元数据（例如补全封面）更新时，刷新系统媒体项（通知栏/锁屏）。
+  void updateCurrentSong(Song song) {
+    mediaItem.add(_mediaItemFor(song, includeArt: true));
+  }
+
   @override
   Future<void> play() async {
     // 曲末恢复：completed 且位置停在尾部时，移动端原生 just_audio 的
@@ -690,7 +695,10 @@ class MusicAudioHandler extends BaseAudioHandler
       artist: song.artist,
       duration: song.duration,
       artUri: includeArt && song.coverUrl != null
-          ? Uri.tryParse(song.coverUrl!)
+          ? (song.coverUrl!.startsWith('/') ||
+                  (song.coverUrl!.length > 2 && song.coverUrl![1] == ':')
+              ? Uri.file(song.coverUrl!)
+              : Uri.tryParse(song.coverUrl!))
           : null,
       extras: {'hash': song.hash, 'songId': song.id},
     );

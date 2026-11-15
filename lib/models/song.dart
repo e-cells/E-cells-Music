@@ -71,6 +71,38 @@ class Song {
   /// 歌曲来源平台。
   final SongSource source;
 
+  Song copyWith({
+    String? id,
+    String? title,
+    String? rawTitle,
+    String? artist,
+    String? hash,
+    String? albumId,
+    String? albumAudioId,
+    String? albumName,
+    String? coverUrl,
+    Duration? duration,
+    List<ArtistRef>? artists,
+    bool? isCloudDrive,
+    SongSource? source,
+  }) {
+    return Song(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      rawTitle: rawTitle ?? this.rawTitle,
+      artist: artist ?? this.artist,
+      hash: hash ?? this.hash,
+      albumId: albumId ?? this.albumId,
+      albumAudioId: albumAudioId ?? this.albumAudioId,
+      albumName: albumName ?? this.albumName,
+      coverUrl: coverUrl ?? this.coverUrl,
+      duration: duration ?? this.duration,
+      artists: artists ?? this.artists,
+      isCloudDrive: isCloudDrive ?? this.isCloudDrive,
+      source: source ?? this.source,
+    );
+  }
+
   factory Song.fromSearch(Map<String, dynamic> json) {
     final songId =
         asString(json['MixSongID']) ??

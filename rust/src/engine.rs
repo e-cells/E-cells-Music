@@ -8,7 +8,7 @@ use crate::kugou::session::KgSession;
 use crate::kugou::session_store::FileSessionStore;
 use crate::services::{
     album, artist, comment, discover, external_playlist, fm, identify, login, lyric, playlist,
-    rank, report, search, song, user, youth,
+    rank, report, search, song, user, video, youth,
 };
 
 /// 登录态等可变部分。读写均经 [`KugouEngine::state`] 的短锁完成，
@@ -314,6 +314,47 @@ impl KugouEngine {
                 // 上游 Dart songClimax(hash) 传单个 hash；兼容逗号分隔多 hash
                 let hash = params.get("hash").map(|s| s.as_str()).unwrap_or("");
                 song::get_song_climax(client, session, hash).await
+            }
+
+            // ===== MV / 视频：播放直链、详情（含清晰度）、歌曲反查 MV、
+            // 歌手 MV 列表、场景 MV 列表（首页「MV 精选」数据源）=====
+            ("GET", "/video/url") => {
+                let hash = params.get("hash").map(|s| s.as_str()).unwrap_or("");
+                video::video_url(client, session, hash).await
+            }
+            ("GET", "/video/detail") => {
+                // Dart 侧契约参数为 id；兼容 ids，逗号分隔可批量
+                let ids = params
+                    .get("id")
+                    .or_else(|| params.get("ids"))
+                    .map(|s| s.as_str())
+                    .unwrap_or("");
+                video::video_detail(client, session, ids).await
+            }
+            ("GET", "/kmr/audio/mv") => {
+                // album_audio_id 逗号分隔批量；fields 默认 h264,h265（兼容性优先）
+                let ids = params
+                    .get("album_audio_id")
+                    .or_else(|| params.get("ids"))
+                    .map(|s| s.as_str())
+                    .unwrap_or("");
+                let fields = params
+                    .get("fields")
+                    .map(|s| s.as_str())
+                    .unwrap_or("h264,h265");
+                video::kmr_audio_mv(client, session, ids, fields).await
+            }
+            ("GET", "/scene/video/list") => {
+                let tag_id = params.get("tag_id").map(|s| s.as_str()).unwrap_or("");
+                let page = params
+                    .get("page")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(1i64);
+                let pagesize = params
+                    .get("pagesize")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(30i64);
+                video::scene_videos(client, session, tag_id, page, pagesize).await
             }
             ("GET", "/search/lyric") => {
                 let hash = params.get("hash").map(|s| s.as_str());
@@ -681,6 +722,20 @@ impl KugouEngine {
                     .unwrap_or(30i64);
                 let sort = params.get("sort").map(|s| s.as_str()).unwrap_or("new");
                 artist::artist_albums(client, session, id, page, pagesize, sort).await
+            }
+            ("GET", "/artist/videos") => {
+                // tag: official(官方)/live(现场)/fan(饭制)/artist(歌手发布)/all
+                let id = params.get("id").map(|s| s.as_str()).unwrap_or("");
+                let page = params
+                    .get("page")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(1i64);
+                let pagesize = params
+                    .get("pagesize")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(30i64);
+                let tag = params.get("tag").map(|s| s.as_str()).unwrap_or("all");
+                artist::artist_videos(client, session, id, page, pagesize, tag).await
             }
 
             ("GET", "/comment/music") => {

@@ -244,8 +244,9 @@ void main() {
       debugDesktopFormFactorOverride = false;
       addTearDown(() => debugDesktopFormFactorOverride = null);
 
-      // 9 个入口（4 宫格 + 5 平铺）：宫格固定为添加到歌单/倍速/音质/
-      // 歌曲信息；其余 5 个（高潮/音效/定时/歌词进度/桌面歌词）平铺成 ListTile。
+      // 10 个入口（4 宫格 + 6 平铺）：宫格固定为添加到歌单/倍速/音质/
+      // 歌曲信息；其余 6 个（观看MV/高潮/音效/定时/歌词进度/桌面歌词）
+      // 平铺成 ListTile。
       final player = _FakePlayerFull();
       final auth = _FakeAuthController();
 
@@ -268,16 +269,17 @@ void main() {
       await tester.tap(find.text('more'));
       await tester.pumpAndSettle();
 
-      // 9 个入口全部可见：宫格 4 个（添加到歌单/倍速/音质/歌曲信息）+
-      // 平铺 5 行（高潮/音效/定时/歌词进度/桌面歌词）。
+      // 10 个入口全部可见：宫格 4 个（添加到歌单/倍速/音质/歌曲信息）+
+      // 平铺 6 行（观看MV/高潮/音效/定时/歌词进度/桌面歌词）。
       expect(find.text('添加到歌单'), findsOneWidget);
       expect(find.text('歌曲信息'), findsOneWidget);
+      expect(find.text('观看 MV'), findsOneWidget);
       expect(find.text('高潮'), findsOneWidget);
       expect(find.text('音效'), findsOneWidget);
       expect(find.text('定时'), findsOneWidget);
       expect(find.text('歌词进度'), findsOneWidget);
       expect(find.text('桌面歌词'), findsOneWidget);
-      expect(find.byType(ListTile), findsNWidgets(5));
+      expect(find.byType(ListTile), findsNWidgets(6));
     });
 
     testWidgets('无音效时宫格仍为固定 4 位，高潮/定时下沉到列表', (tester) async {
@@ -285,7 +287,7 @@ void main() {
       addTearDown(() => debugDesktopFormFactorOverride = null);
 
       // 无音效无桌面歌词：宫格仍是添加到歌单/倍速/音质/歌曲信息，
-      // 高潮/定时/歌词进度平铺 3 行。
+      // 观看MV/高潮/定时/歌词进度平铺 4 行。
       final player = _FakePlayerController();
       final auth = _FakeAuthController();
 
@@ -309,13 +311,14 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('添加到歌单'), findsOneWidget);
+      expect(find.text('观看 MV'), findsOneWidget);
       expect(find.text('高潮'), findsOneWidget);
       expect(find.text('定时'), findsOneWidget);
       expect(find.text('歌词进度'), findsOneWidget);
       expect(find.text('歌曲信息'), findsOneWidget);
       // 添加到歌单与歌曲信息进了宫格而非列表：
-      // 列表只剩高潮/定时/歌词进度 3 行。
-      expect(find.byType(ListTile), findsNWidgets(3));
+      // 列表只剩观看MV/高潮/定时/歌词进度 4 行。
+      expect(find.byType(ListTile), findsNWidgets(4));
     });
   });
 

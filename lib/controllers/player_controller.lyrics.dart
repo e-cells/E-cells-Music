@@ -77,6 +77,66 @@ mixin _PlayerLyrics on _PlayerControllerBase {
         debugPrint('Failed to load embedded lyrics: $e');
       }
 
+      // 3. 本地 .lrc 与内嵌歌词均不存在时：联网匹配歌词！
+      // 3.1 先查本地歌词缓存
+      final localLyricCacheKey = 'cache_lyric_local_${song.hash}';
+      if (cache != null) {
+        try {
+          final cached = await cache.read<List<LyricLine>>(
+            localLyricCacheKey,
+            decode: (json) => (json['lines'] as List? ?? const [])
+                .whereType<Map<String, dynamic>>()
+                .map(LyricLine.fromCache)
+                .toList(),
+            ttl: const Duration(days: 30),
+          );
+          if (cached != null &&
+              cached.data.isNotEmpty &&
+              currentSong?.hash == song.hash) {
+            lyrics = cached.data;
+            notifyListeners();
+            _syncDesktopLyrics();
+            return;
+          }
+        } catch (_) {}
+      }
+
+      // 3.2 联网匹配歌词
+      try {
+        final candidates = await _searchLocalSongCandidates(song);
+        final matched = _findBestLocalMatch(candidates, song);
+        if (matched != null) {
+          // 若此时当前歌曲还没有封面，顺便把网络匹配到的封面同步补齐
+          if (currentSong?.hash == song.hash &&
+              (currentSong?.coverUrl == null || currentSong!.coverUrl!.isEmpty)) {
+            if (matched.coverUrl != null && matched.coverUrl!.isNotEmpty) {
+              _applyResolvedLocalCover(song, matched.coverUrl!);
+            }
+          }
+
+          final fresh = await _api.lyrics(matched);
+          if (fresh.isNotEmpty) {
+            if (currentSong?.hash == song.hash) {
+              lyrics = fresh;
+              notifyListeners();
+              _syncDesktopLyrics();
+            }
+            if (cache != null) {
+              unawaited(
+                cache
+                    .write(localLyricCacheKey, {
+                      'lines': fresh.map((l) => l.toCache()).toList(),
+                    })
+                    .catchError((Object _) {}),
+              );
+            }
+            return;
+          }
+        }
+      } catch (e) {
+        debugPrint('Failed to match online lyrics for local song: $e');
+      }
+
       if (currentSong?.hash == song.hash) {
         lyrics = const [];
         notifyListeners();

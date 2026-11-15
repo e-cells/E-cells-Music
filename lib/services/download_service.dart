@@ -203,7 +203,7 @@ class DownloadService {
       try {
         final external = await getExternalStorageDirectory();
         if (external != null) {
-          return _ensureDir(
+          return await _ensureDir(
             Directory('${external.path}/${AppConfig.downloadDirName}'),
           );
         }

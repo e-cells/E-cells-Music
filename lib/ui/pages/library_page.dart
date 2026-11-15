@@ -4,6 +4,7 @@ import '../design_tokens.dart';
 
 import '../../controllers/auth_controller.dart';
 import '../../controllers/download_controller.dart';
+import '../../controllers/mv_player_controller.dart';
 import '../../controllers/player_controller.dart';
 import '../../controllers/theme_controller.dart';
 import '../../models/music_models.dart';
@@ -14,6 +15,7 @@ import '../widgets/artwork.dart';
 import '../widgets/toast.dart';
 import 'cloud_drive_page.dart';
 import 'downloaded_songs_page.dart';
+import 'mv_collection_page.dart';
 import 'playback_history_page.dart';
 import 'playlist_detail_page.dart';
 import 'settings_page.dart';
@@ -424,6 +426,57 @@ class LibraryPageState extends State<LibraryPage> {
                               auth: widget.auth,
                               player: widget.player,
                               downloads: widget.downloads,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  // 3.5 收藏的 MV 入口（一行卡片，带收藏数角标）。
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
+                      child: Card(
+                        margin: EdgeInsets.zero,
+                        elevation: 0,
+                        color: Theme.of(context).colorScheme.surfaceContainerLow,
+                        clipBehavior: Clip.antiAlias,
+                        child: ListTile(
+                          leading: Icon(
+                            Icons.music_video_rounded,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                          title: const Text(
+                            '收藏的 MV',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          trailing: AnimatedBuilder(
+                            animation: MvPlayerController.instance,
+                            builder: (context, _) {
+                              final count =
+                                  MvPlayerController.instance.collectedMvs.length;
+                              return Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (count > 0)
+                                    Text(
+                                      '$count',
+                                      style: TextStyle(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurfaceVariant,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  const Icon(Icons.chevron_right_rounded),
+                                ],
+                              );
+                            },
+                          ),
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const MvCollectionPage(),
                             ),
                           ),
                         ),

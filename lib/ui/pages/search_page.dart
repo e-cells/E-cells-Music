@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../controllers/auth_controller.dart';
+import '../../controllers/mv_player_controller.dart';
 import '../../controllers/player_controller.dart';
 import '../../controllers/theme_controller.dart';
 import '../../models/music_models.dart';
@@ -14,6 +15,7 @@ import '../widgets/artwork.dart';
 import '../widgets/app_search_field.dart';
 import '../widgets/horizontal_wheel_scroll.dart';
 import '../widgets/mini_player.dart';
+import '../widgets/mv_card.dart';
 import '../widgets/song_action_sheets.dart' show toggleLikeWithFeedback;
 import '../widgets/toast.dart';
 import '../adaptive_layout.dart';
@@ -21,6 +23,7 @@ import '../keyboard_focus_guard.dart';
 import '../player/song_tap_handler.dart';
 import 'artist_detail_page.dart';
 import 'identify_page.dart';
+import 'mv_player_page.dart';
 import 'playlist_detail_page.dart';
 import 'dart:math' as math;
 import '../form_factor.dart';
@@ -55,7 +58,7 @@ class SearchPage extends StatefulWidget {
 enum _SearchPlatform { kugou, netease }
 
 /// 酷狗搜索类型。
-enum _SearchType { song, artist, album, playlist }
+enum _SearchType { song, artist, album, playlist, mv }
 
 class _SearchPageState extends State<SearchPage> {
   final _controller = TextEditingController();
@@ -71,6 +74,7 @@ class _SearchPageState extends State<SearchPage> {
   List<SearchArtistResult> _artistResults = const [];
   List<SearchAlbumResult> _albumResults = const [];
   List<SearchPlaylistResult> _playlistResults = const [];
+  List<MvInfo> _mvResults = const [];
   bool _loading = false;
   bool _searched = false;
   // 搜索失败标记：区分"真无结果"与"网络失败"，失败时展示重试入口。
@@ -138,6 +142,7 @@ class _SearchPageState extends State<SearchPage> {
     _artistResults = const [];
     _albumResults = const [];
     _playlistResults = const [];
+    _mvResults = const [];
     _suggestions = const [];
     _hotCategories = const [];
     _searchHistory = const [];
@@ -253,6 +258,11 @@ class _SearchPageState extends State<SearchPage> {
             if (mounted && seq == _searchSeq) {
               setState(() => _playlistResults = playlists);
             }
+          case _SearchType.mv:
+            final mvs = await widget.api.searchMvs(keywords);
+            if (mounted && seq == _searchSeq) {
+              setState(() => _mvResults = mvs);
+            }
         }
       }
       // 已被更新的搜索取代：不落结果、不记历史、不动 loading
@@ -267,6 +277,7 @@ class _SearchPageState extends State<SearchPage> {
           _artistResults = const [];
           _albumResults = const [];
           _playlistResults = const [];
+          _mvResults = const [];
           _searchError = error.toString();
         });
       }
@@ -338,6 +349,20 @@ class _SearchPageState extends State<SearchPage> {
       return;
     }
     widget.player.playSong(song, queue: _results);
+  }
+
+  /// 播放 MV：结果集作为队列，随播随切（与歌曲搜索点播同构）。
+  void _playMv(MvInfo mv) {
+    final mvPlayer = MvPlayerController.instance;
+    if (MvInfo.isSameMv(mvPlayer.currentMv, mv) && mvPlayer.hasActiveSession) {
+      if (!mvPlayer.isPlaying && !mvPlayer.isPreparing) {
+        unawaited(mvPlayer.togglePlay());
+      }
+      unawaited(MvPlayerPage.open(context, mvPlayer: mvPlayer));
+      return;
+    }
+    unawaited(mvPlayer.playMv(mv, queue: _mvResults));
+    unawaited(MvPlayerPage.open(context, mvPlayer: mvPlayer));
   }
 
   /// 打开听歌识曲页：PC 桌面嵌入与车机横屏推入内容区 Navigator（保留
@@ -736,6 +761,10 @@ class _SearchPageState extends State<SearchPage> {
                   auth: widget.auth,
                   player: widget.player,
                 );
+        case _SearchType.mv:
+          return _mvResults.isEmpty
+              ? _EmptyResults(keyword: text, noun: 'MV')
+              : _MvResults(mvs: _mvResults, onPlay: _playMv);
       }
     }
 
@@ -1823,6 +1852,7 @@ class _SearchTypeSelector extends StatelessWidget {
     _SearchType.artist: '歌手',
     _SearchType.album: '专辑',
     _SearchType.playlist: '歌单',
+    _SearchType.mv: 'MV',
   };
 
   @override
@@ -1877,6 +1907,35 @@ class _SearchTypeSelector extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// MV 搜索结果
+// ---------------------------------------------------------------------------
+
+class _MvResults extends StatelessWidget {
+  const _MvResults({required this.mvs, required this.onPlay});
+
+  final List<MvInfo> mvs;
+  final ValueChanged<MvInfo> onPlay;
+
+  @override
+  Widget build(BuildContext context) {
+    return GridView.builder(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 260,
+        mainAxisSpacing: 14,
+        crossAxisSpacing: 12,
+        childAspectRatio: 16 / 11.6, // 16:9 封面 + 标题/歌手两行
+      ),
+      itemCount: mvs.length,
+      itemBuilder: (context, index) {
+        final mv = mvs[index];
+        return MvCard(mv: mv, onTap: () => onPlay(mv));
+      },
     );
   }
 }

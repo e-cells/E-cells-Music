@@ -8,8 +8,10 @@ echo.
 setlocal
 set JAVA_HOME=E:\jdk17\jdk-17.0.2
 set ANDROID_HOME=C:\Users\HULY\AppData\Local\Android\Sdk
+set ANDROID_NDK_HOME=C:\Users\HULY\AppData\Local\Android\Sdk\ndk\28.2.13676358
+set NDK_HOME=C:\Users\HULY\AppData\Local\Android\Sdk\ndk\28.2.13676358
 set JAVA_TOOL_OPTIONS=-Dfile.encoding=UTF-8
-set PATH=%JAVA_HOME%\bin;%ANDROID_HOME%\platform-tools;%PATH%
+set PATH=%USERPROFILE%\.cargo\bin;%JAVA_HOME%\bin;%ANDROID_HOME%\platform-tools;%PATH%
 
 cd /d "%~dp0"
 
